@@ -5,7 +5,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import AwareDatetime, Field, field_validator, model_validator
 
-from rehearsal.domain.actions import Action, AddLabel
+from rehearsal.domain.actions import Action, AddComment, AddLabel, CreateIssue, referenced_issue_id
 from rehearsal.domain.canonical import fingerprint
 from rehearsal.domain.models import (
     BoardSnapshot,
@@ -16,11 +16,18 @@ from rehearsal.domain.models import (
     as_utc,
     canonical_labels,
 )
-from rehearsal.domain.policy import MAX_ACTIONS, BlockReason, Policy, check_batch
+from rehearsal.domain.policy import (
+    MAX_ACTIONS,
+    BlockReason,
+    Policy,
+    check_batch,
+    has_restricted_content,
+)
 
 Identifier = Annotated[str, Field(min_length=1, max_length=64)]
+ActionId = Annotated[str, Field(pattern=r"^[a-zA-Z0-9_-]{1,60}$")]
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-ACTION_SCHEMA_VERSION = "issuehub-actions-v1"
+ACTION_SCHEMA_VERSION = "issuehub-actions-v2"
 PLAN_DIGEST_PREFIX = b"rehearsal-plan-v1\n"
 
 
@@ -52,16 +59,23 @@ class ResolutionEvidence(FrozenModel):
     expected_value: bool
 
 
+class RegistryEvidence(FrozenModel):
+    field: Literal["label_registry"]
+    expected_value: tuple[Label, ...]
+
+    _normalize_labels = field_validator("expected_value")(canonical_labels)
+
+
 Evidence = Annotated[
-    StateEvidence | LabelEvidence | ActivityEvidence | ResolutionEvidence,
+    StateEvidence | LabelEvidence | ActivityEvidence | ResolutionEvidence | RegistryEvidence,
     Field(discriminator="field"),
 ]
 
 
 class Proposal(FrozenModel):
-    action_id: Identifier
+    action_id: ActionId
     action: Action
-    evidence: tuple[Evidence, ...] = Field(min_length=1, max_length=4)
+    evidence: tuple[Evidence, ...] = Field(min_length=1, max_length=5)
     rationale: str = Field(min_length=1, max_length=500)
 
 
@@ -92,7 +106,7 @@ class PlanContext(FrozenModel):
 
 
 class BoundAction(Proposal):
-    observed_issue_revision: Revision
+    observed_issue_revision: Revision | None
 
 
 class ValidatedPlan(PlanContext):
@@ -105,7 +119,7 @@ class ValidatedPlan(PlanContext):
     policy_id: Identifier
     policy_version: Identifier
     policy_fingerprint: Sha256
-    action_schema_version: Literal["issuehub-actions-v1"]
+    action_schema_version: Literal["issuehub-actions-v2"]
     goal_summary: str = Field(min_length=1, max_length=500)
     actions: tuple[BoundAction, ...] = Field(min_length=1, max_length=MAX_ACTIONS)
 
@@ -132,20 +146,26 @@ class PlanValidationError(ValueError):
 def _bind_actions(
     proposals: tuple[Proposal, ...], snapshot: BoardSnapshot, policy: Policy
 ) -> tuple[BoundAction, ...]:
-    if block := check_batch(snapshot, len(proposals), policy):
+    if block := check_batch(snapshot, tuple(proposal.action for proposal in proposals), policy):
         raise PlanValidationError(block, "batch exceeds trusted policy scope")
 
     issues = {issue.id: issue for issue in snapshot.issues}
     action_ids: set[str] = set()
-    operations: set[tuple[str, str, str | None]] = set()
+    operations: set[tuple[object, ...]] = set()
     bound: list[BoundAction] = []
     for proposal in proposals:
         action = proposal.action
-        operation = (
-            action.kind,
-            action.issue_id,
-            action.label if isinstance(action, AddLabel) else None,
-        )
+        if has_restricted_content(action):
+            raise PlanValidationError(BlockReason.RESTRICTED_CONTENT, proposal.action_id)
+        issue_id = referenced_issue_id(action)
+        if isinstance(action, CreateIssue):
+            operation = (action.kind, issue_id, action.title, action.body, action.labels)
+        elif isinstance(action, AddComment):
+            operation = (action.kind, issue_id, action.body)
+        elif isinstance(action, AddLabel):
+            operation = (action.kind, issue_id, action.label)
+        else:
+            operation = (action.kind, issue_id)
         if proposal.action_id in action_ids:
             raise PlanValidationError(PlanErrorCode.DUPLICATE_ACTION_ID, proposal.action_id)
         if operation in operations:
@@ -153,18 +173,29 @@ def _bind_actions(
         action_ids.add(proposal.action_id)
         operations.add(operation)
 
-        issue = issues.get(action.issue_id)
-        if issue is None:
-            raise PlanValidationError(BlockReason.ISSUE_NOT_FOUND, action.issue_id)
+        issue = issues.get(issue_id) if issue_id is not None else None
+        if issue_id is not None and issue is None:
+            raise PlanValidationError(BlockReason.ISSUE_NOT_FOUND, issue_id)
         evidence_fields = set()
+        issue_evidence = False
         for evidence in proposal.evidence:
-            if (
-                evidence.issue_id != issue.id
-                or evidence.field in evidence_fields
-                or evidence.expected_value != getattr(issue, evidence.field)
-            ):
+            if isinstance(evidence, RegistryEvidence):
+                matches = (
+                    isinstance(action, CreateIssue)
+                    and evidence.expected_value == snapshot.label_registry
+                )
+            else:
+                matches = (
+                    issue is not None
+                    and evidence.issue_id == issue.id
+                    and evidence.expected_value == getattr(issue, evidence.field)
+                )
+                issue_evidence |= matches
+            if not matches or evidence.field in evidence_fields:
                 raise PlanValidationError(PlanErrorCode.INVALID_EVIDENCE, proposal.action_id)
             evidence_fields.add(evidence.field)
+        if issue is not None and not issue_evidence:
+            raise PlanValidationError(PlanErrorCode.INVALID_EVIDENCE, proposal.action_id)
 
         bound.append(
             BoundAction(
@@ -172,7 +203,7 @@ def _bind_actions(
                 action=action,
                 evidence=proposal.evidence,
                 rationale=proposal.rationale,
-                observed_issue_revision=issue.revision,
+                observed_issue_revision=issue.revision if issue else None,
             )
         )
     return tuple(bound)

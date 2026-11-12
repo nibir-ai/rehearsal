@@ -1,7 +1,7 @@
 # Rehearsal
 
-Rehearsal previews what proposed IssueHub actions would change. The local demo supports issue
-closure and label addition against a fixed snapshot.
+Rehearsal previews what proposed IssueHub actions would change. The simulator supports issue
+closure, label addition, comments, and new issues against a fixed snapshot.
 
 Run these commands from the repository root with Python 3.12 and uv. See the
 [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/).
@@ -20,6 +20,12 @@ The [five-issue fixture](fixtures/boards/platform.json) represents `demo/platfor
 The report shows before/after values and checks that the original snapshot's fingerprint
 stays the same. Pass `--json` to the demo to inspect the exact plan, captured evidence,
 digest, and structured simulation.
+
+Pass `--full` to also preview a follow-up for ISS-108 and a rejected closure for recently
+active ISS-117. Predicted issues and comments have temporary `tmp:` IDs. Adding a comment
+updates predicted issue activity, so a later closure of the same issue can be blocked.
+The default plan limit is five actions, including up to two new issues. The preview rejects
+common credential patterns in proposed text. This check covers a limited set of patterns.
 
 The simulator evaluates a fixed batch in order against a copy of the source state. A closure
 needs an open issue, a trusted resolution flag, and at least 30 full days of inactivity.

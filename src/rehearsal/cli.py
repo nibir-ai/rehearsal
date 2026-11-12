@@ -6,7 +6,14 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from rehearsal.domain.actions import Action, AddLabel, CloseIssue
+from rehearsal.domain.actions import (
+    Action,
+    AddComment,
+    AddLabel,
+    CloseIssue,
+    CreateIssue,
+    referenced_issue_id,
+)
 from rehearsal.domain.models import BoardSnapshot
 from rehearsal.domain.plans import (
     ActivityEvidence,
@@ -29,21 +36,38 @@ from rehearsal.issuehub.seed import seed_board
 def _describe(action: Action) -> str:
     if isinstance(action, CloseIssue):
         return f"close {action.issue_id}"
-    return f"add {action.label} to {action.issue_id}"
+    if isinstance(action, AddLabel):
+        return f"add {action.label} to {action.issue_id}"
+    if isinstance(action, AddComment):
+        return f"comment on {action.issue_id}"
+    return f"create {action.title}"
 
 
-def _candidate(snapshot: BoardSnapshot) -> CandidatePlan:
-    actions = (
+def _candidate(snapshot: BoardSnapshot, *, full: bool) -> CandidatePlan:
+    actions: tuple[Action, ...] = (
         CloseIssue(issue_id="ISS-104", reason="completed"),
         AddLabel(issue_id="ISS-108", label="needs-follow-up"),
         CloseIssue(issue_id="ISS-112", reason="completed"),
     )
+    if full:
+        actions = (
+            *actions[:2],
+            CreateIssue(
+                title="Investigate import queue stall",
+                body="Follow-up for ISS-108",
+                labels=("follow-up",),
+                source_issue_id="ISS-108",
+            ),
+            actions[2],
+            CloseIssue(issue_id="ISS-117", reason="completed"),
+        )
     issues = {issue.id: issue for issue in snapshot.issues}
     proposals: list[Proposal] = []
     for index, action in enumerate(actions, start=1):
-        issue = issues.get(action.issue_id)
+        issue_id = referenced_issue_id(action)
+        issue = issues.get(issue_id) if issue_id is not None else None
         if issue is None:
-            raise PlanValidationError(BlockReason.ISSUE_NOT_FOUND, action.issue_id)
+            raise PlanValidationError(BlockReason.ISSUE_NOT_FOUND, issue_id or "fixture source")
         labels = LabelEvidence(issue_id=issue.id, field="labels", expected_value=issue.labels)
         evidence: tuple[Evidence, ...]
         if isinstance(action, CloseIssue):
@@ -72,12 +96,12 @@ def _candidate(snapshot: BoardSnapshot) -> CandidatePlan:
     )
 
 
-def _demo(snapshot: BoardSnapshot, *, json_output: bool) -> None:
+def _demo(snapshot: BoardSnapshot, *, json_output: bool, full: bool) -> None:
     clock = snapshot.captured_at
     source_fingerprint = snapshot.fingerprint()
     policy = Policy()
     plan = validate_plan(
-        _candidate(snapshot),
+        _candidate(snapshot, full=full),
         snapshot,
         policy,
         PlanContext(
@@ -104,20 +128,27 @@ def _demo(snapshot: BoardSnapshot, *, json_output: bool) -> None:
     print("Candidate: " + "; ".join(_describe(entry.action) for entry in plan.actions))
     print(f"Preview plan digest: {preview.plan_digest}")
     print("Simulation (before -> predicted after):")
-    for outcome in preview.simulation.outcomes:
-        action = outcome.action
-        kind = "close" if isinstance(action, CloseIssue) else "add_label"
+    for entry, outcome in zip(plan.actions, preview.simulation.outcomes, strict=True):
+        action = entry.action
+        kind = "close" if isinstance(action, CloseIssue) else action.kind
+        target = referenced_issue_id(action) or "new issue"
         if isinstance(outcome, BlockedAction):
             detail = f"{outcome.reason_code}; no change"
         elif isinstance(outcome, NoOpAction):
             detail = f"{outcome.action.label} already present; no change"
-        elif isinstance(action, CloseIssue):
+        elif isinstance(action, CreateIssue):
+            detail = f"create {outcome.after.id}; persistent ID assigned during execution"
+        elif isinstance(action, AddComment):
+            assert outcome.comment is not None
+            detail = f"append {outcome.comment.id}; update issue activity"
+        elif isinstance(action, CloseIssue) and outcome.before is not None:
             detail = f"{outcome.before.state} -> {outcome.after.state}"
         else:
+            assert isinstance(action, AddLabel) and outcome.before is not None
             before = ", ".join(outcome.before.labels) or "(none)"
             after = ", ".join(outcome.after.labels)
             detail = f"add {action.label}; labels: {before} -> {after}"
-        print(f"  {outcome.status} {kind} {action.issue_id}  [{detail}]")
+        print(f"  {outcome.status} {kind} {target}  [{detail}]")
     print("SOURCE SNAPSHOT: unchanged (SHA-256 match)")
     print("LIVE WRITE COUNT: 0")
 
@@ -131,6 +162,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     source.add_argument("--database", type=Path, help="path to a seeded IssueHub database")
     demo.add_argument("--at", help="explicit UTC or offset timestamp for a database capture")
     demo.add_argument("--json", action="store_true", help="print the exact plan and simulation")
+    demo.add_argument("--full", action="store_true", help="include a follow-up and a recent issue")
     seed = commands.add_parser("seed", help="install a fixture into a local IssueHub database")
     seed.add_argument("--fixture", required=True, type=Path)
     seed.add_argument("--database", required=True, type=Path)
@@ -175,7 +207,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             snapshot = IssueHubReader(args.database, allowed_board_id=board_id).capture(
                 board_id, clock=clock
             )
-        _demo(snapshot, json_output=args.json)
+        _demo(snapshot, json_output=args.json, full=args.full)
     except (OSError, sqlite3.Error, BoardNotFound, ValueError, OverflowError) as exc:
         parser.error(str(exc))
 
