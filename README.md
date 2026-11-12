@@ -91,3 +91,25 @@ uv run --locked --no-dev python -m rehearsal.cli serve --database issuehub.sqlit
 Open [Rehearsal](http://127.0.0.1:8000/) to compare changes, inspect captured evidence,
 filter policy outcomes, and download the report you reviewed. The page previews three
 changes and explains two blocked actions for the seeded board.
+
+## Local owner approval API
+
+Use `migrate` on an existing database to add the approval tables. Set
+`REHEARSAL_OWNER_SECRET` to a random secret of at least 32 characters and add
+`--owner-approval` to the loopback server command. The approval workflow uses
+the current UTC time, including when the browser demo uses a fixed `--at` value.
+
+1. Send `POST /api/owner/session` with `Authorization: Bearer <owner secret>`.
+   Keep the session cookie and the returned `csrf_token`.
+2. Send `POST /api/runs` with
+   `{"target_id":"demo/platform","goal":"Rehearse stale-issue maintenance"}`.
+   Review the returned actions and digest. Retrieve the persisted review at
+   `GET /api/runs/{run_id}/preview`.
+3. Send `POST /api/runs/{run_id}/approve` with
+   `{"decision":"approve","plan_digest":"<reviewed digest>"}`. To reject, use
+   `/reject` and `"decision":"reject"`.
+
+For POST requests, send an `Origin` that matches the server URL, such as
+`http://127.0.0.1:8000`. After sign-in, include the cookie and
+`X-Rehearsal-CSRF: <csrf_token>` on POST requests. The review expires within ten
+minutes. An approval records the decision for that exact plan and leaves the board untouched.

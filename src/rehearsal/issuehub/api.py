@@ -14,6 +14,8 @@ from rehearsal.demo import preview_demo
 from rehearsal.domain.models import as_utc
 from rehearsal.domain.plans import PlanValidationError
 from rehearsal.domain.policy import Policy
+from rehearsal.issuehub.approval import ApprovalService
+from rehearsal.issuehub.approval_api import approval_router
 from rehearsal.issuehub.reader import (
     MAX_CURSOR_LENGTH,
     MAX_PAGE_SIZE,
@@ -33,12 +35,15 @@ def create_app(
     *,
     clock: datetime | None = None,
     web_dist: Path | None = None,
+    owner_secret: str | None = None,
 ) -> FastAPI:
     allowed_board_id = Policy().allowed_board_id
     reader = IssueHubReader(database, allowed_board_id=allowed_board_id)
     app = FastAPI(title="IssueHub", docs_url=None, redoc_url=None)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
     fixed_clock = as_utc(clock) if clock is not None else None
+    if owner_secret is not None:
+        app.include_router(approval_router(ApprovalService(database, owner_secret=owner_secret)))
 
     @app.get("/api/rehearsal/preview")
     def preview(response: Response) -> ReviewReport:

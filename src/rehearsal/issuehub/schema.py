@@ -41,6 +41,48 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
             FOREIGN KEY (board_id, issue_id) REFERENCES issues(board_id, id)
         )""",
     ),
+    (
+        """CREATE TABLE owner_sessions (
+            id_hash TEXT PRIMARY KEY NOT NULL,
+            csrf_hash TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        )""",
+        """CREATE TABLE runs (
+            id TEXT PRIMARY KEY NOT NULL,
+            session_hash TEXT NOT NULL REFERENCES owner_sessions(id_hash),
+            target_id TEXT NOT NULL REFERENCES boards(id),
+            status TEXT NOT NULL CHECK (status IN (
+                'AWAITING_APPROVAL', 'APPROVED', 'REJECTED', 'STALE'
+            )),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""",
+        """CREATE TABLE snapshots (
+            run_id TEXT PRIMARY KEY NOT NULL REFERENCES runs(id),
+            canonical_json TEXT NOT NULL,
+            fingerprint TEXT NOT NULL
+        )""",
+        """CREATE TABLE plans (
+            run_id TEXT PRIMARY KEY NOT NULL REFERENCES runs(id),
+            canonical_json TEXT NOT NULL,
+            digest TEXT NOT NULL
+        )""",
+        """CREATE TABLE approvals (
+            id TEXT PRIMARY KEY NOT NULL,
+            run_id TEXT NOT NULL UNIQUE REFERENCES runs(id),
+            plan_digest TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            snapshot_revision INTEGER NOT NULL,
+            policy_version TEXT NOT NULL,
+            tool_contract_hash TEXT,
+            actor_id TEXT NOT NULL,
+            session_hash TEXT NOT NULL REFERENCES owner_sessions(id_hash),
+            nonce TEXT NOT NULL UNIQUE,
+            approved_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            consumed_at TEXT
+        )""",
+    ),
 )
 SCHEMA_VERSION = len(MIGRATIONS)
 

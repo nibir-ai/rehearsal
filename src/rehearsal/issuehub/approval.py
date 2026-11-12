@@ -1,0 +1,339 @@
+"""Persist exact owner-reviewed plans and record explicit decisions."""
+
+import sqlite3
+from collections.abc import Callable, Iterator
+from contextlib import closing, contextmanager
+from datetime import UTC, datetime, timedelta
+from hashlib import sha256
+from hmac import digest as hmac_digest
+from pathlib import Path
+from secrets import compare_digest, token_hex, token_urlsafe
+from typing import Literal
+
+from pydantic import AwareDatetime
+
+from rehearsal.demo import demo_candidate
+from rehearsal.domain.canonical import canonical_json
+from rehearsal.domain.models import BoardSnapshot, FrozenModel, as_utc
+from rehearsal.domain.plans import (
+    CandidatePlan,
+    PlanContext,
+    PlanErrorCode,
+    PlanValidationError,
+    Sha256,
+    ValidatedPlan,
+    validate_plan,
+)
+from rehearsal.domain.policy import Policy
+from rehearsal.domain.simulator import AllowedAction, PlanPreview, simulate_plan
+from rehearsal.issuehub.reader import BoardNotFound, IssueHubReader
+from rehearsal.issuehub.review import ReviewReport, review_report
+from rehearsal.issuehub.schema import SCHEMA_VERSION, schema_version
+
+OWNER_ID = "local-owner"
+SESSION_TTL = timedelta(hours=8)
+PLAN_TTL = timedelta(minutes=10)
+RunStatus = Literal["AWAITING_APPROVAL", "APPROVED", "REJECTED", "STALE"]
+
+
+class ApprovalError(ValueError):
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+class OwnerSession(FrozenModel):
+    token: str
+    csrf_token: str
+    expires_at: AwareDatetime
+
+
+class RunReview(FrozenModel):
+    run_id: str
+    status: RunStatus
+    expires_at: AwareDatetime
+    review: ReviewReport
+
+
+class ApprovalRecord(FrozenModel):
+    approval_id: str
+    run_id: str
+    plan_digest: Sha256
+    target_id: str
+    snapshot_revision: int
+    policy_version: str
+    actor_id: str
+    approved_at: AwareDatetime
+    expires_at: AwareDatetime
+    status: Literal["APPROVED"] = "APPROVED"
+
+
+class Rejection(FrozenModel):
+    run_id: str
+    status: Literal["REJECTED"] = "REJECTED"
+
+
+def _hash(value: str) -> str:
+    return sha256(value.encode("utf-8")).hexdigest()
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+class ApprovalService:
+    def __init__(
+        self,
+        database: Path,
+        *,
+        owner_secret: str,
+        policy: Policy | None = None,
+        clock: Callable[[], datetime] = _utc_now,
+    ) -> None:
+        if len(owner_secret) < 32 or not owner_secret.isascii() or not owner_secret.isprintable():
+            raise ValueError("owner secret must be at least 32 printable ASCII characters")
+        if any(character.isspace() for character in owner_secret):
+            raise ValueError("owner secret must not contain whitespace")
+        self._database = database.resolve().as_uri()
+        self._secret_hash = _hash(owner_secret)
+        self._policy = policy if policy is not None else Policy()
+        self._reader = IssueHubReader(database, allowed_board_id=self._policy.allowed_board_id)
+        self._clock = clock
+
+    def _session_hash(self, token: str) -> str:
+        return hmac_digest(bytes.fromhex(self._secret_hash), token.encode(), "sha256").hex()
+
+    @contextmanager
+    def _transaction(self, *, write: bool) -> Iterator[sqlite3.Connection]:
+        mode = "rw" if write else "ro"
+        with closing(sqlite3.connect(f"{self._database}?mode={mode}", uri=True)) as db, db:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA foreign_keys = ON")
+            db.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+            if schema_version(db) != SCHEMA_VERSION:
+                raise ApprovalError("MIGRATION_REQUIRED")
+            yield db
+
+    def open_session(self, secret: str) -> OwnerSession:
+        if not compare_digest(_hash(secret), self._secret_hash):
+            raise ApprovalError("OWNER_AUTH_REQUIRED")
+        with self._transaction(write=True) as db:
+            session = OwnerSession(
+                token=token_urlsafe(32),
+                csrf_token=token_urlsafe(32),
+                expires_at=as_utc(self._clock()) + SESSION_TTL,
+            )
+            db.execute(
+                "INSERT INTO owner_sessions VALUES (?, ?, ?)",
+                (
+                    self._session_hash(session.token),
+                    _hash(session.csrf_token),
+                    session.expires_at.isoformat(),
+                ),
+            )
+        return session
+
+    def _session(
+        self,
+        db: sqlite3.Connection,
+        token: str,
+        now: datetime,
+        *,
+        csrf: str | None = None,
+    ) -> tuple[str, datetime]:
+        if not token:
+            raise ApprovalError("OWNER_AUTH_REQUIRED")
+        session_hash = self._session_hash(token)
+        session = db.execute(
+            "SELECT csrf_hash, expires_at FROM owner_sessions WHERE id_hash = ?", (session_hash,)
+        ).fetchone()
+        if session is None:
+            raise ApprovalError("OWNER_AUTH_REQUIRED")
+        expires_at = datetime.fromisoformat(session["expires_at"])
+        if now >= expires_at:
+            raise ApprovalError("OWNER_AUTH_REQUIRED")
+        if csrf is not None and not compare_digest(_hash(csrf), session["csrf_hash"]):
+            raise ApprovalError("CSRF_INVALID")
+        return session_hash, expires_at
+
+    def create_run(self, target_id: str, token: str, csrf: str) -> RunReview:
+        with self._transaction(write=True) as db:
+            now = as_utc(self._clock())
+            session_hash, session_expiry = self._session(db, token, now, csrf=csrf)
+            if target_id != self._policy.allowed_board_id:
+                raise ApprovalError("TARGET_OUT_OF_SCOPE")
+            try:
+                snapshot = self._reader.capture(target_id, clock=now)
+            except BoardNotFound as exc:
+                raise ApprovalError("BOARD_NOT_FOUND") from exc
+            run_id = token_hex(16)
+            context = PlanContext(
+                run_id=run_id,
+                plan_version=1,
+                created_at=now,
+                expires_at=min(now + PLAN_TTL, session_expiry),
+                simulation_clock=now,
+                owner_id=OWNER_ID,
+            )
+            try:
+                proposal = demo_candidate(snapshot, full=True)
+                candidate_plan = validate_plan(proposal, snapshot, self._policy, context)
+                candidate_preview = simulate_plan(snapshot, candidate_plan, self._policy)
+                allowed = tuple(
+                    entry
+                    for entry, outcome in zip(
+                        proposal.proposals, candidate_preview.simulation.outcomes, strict=True
+                    )
+                    if isinstance(outcome, AllowedAction)
+                )
+                if not allowed:
+                    raise ApprovalError("NO_APPROVABLE_ACTIONS")
+                exact = CandidatePlan(goal_summary=proposal.goal_summary, proposals=allowed)
+                plan = validate_plan(exact, snapshot, self._policy, context)
+                preview = self._exact_preview(snapshot, plan)
+            except PlanValidationError as exc:
+                raise ApprovalError("DEMO_PLAN_UNAVAILABLE") from exc
+            db.execute(
+                """INSERT INTO runs VALUES (?, ?, ?, 'AWAITING_APPROVAL', ?, ?)""",
+                (run_id, session_hash, target_id, now.isoformat(), now.isoformat()),
+            )
+            db.execute(
+                "INSERT INTO snapshots VALUES (?, ?, ?)",
+                (run_id, canonical_json(snapshot).decode(), snapshot.fingerprint()),
+            )
+            db.execute(
+                "INSERT INTO plans VALUES (?, ?, ?)",
+                (run_id, canonical_json(plan).decode(), plan.digest()),
+            )
+            return self._review("AWAITING_APPROVAL", preview)
+
+    def get_review(self, run_id: str, token: str) -> RunReview:
+        with self._transaction(write=False) as db:
+            session_hash, _ = self._session(db, token, as_utc(self._clock()))
+            status, snapshot, plan = self._load(db, run_id, session_hash)
+            return self._review(status, self._exact_preview(snapshot, plan))
+
+    def approve(self, run_id: str, digest: str, token: str, csrf: str) -> ApprovalRecord:
+        with self._transaction(write=True) as db:
+            now = as_utc(self._clock())
+            session_hash, session_expiry = self._session(db, token, now, csrf=csrf)
+            status, snapshot, plan = self._load(db, run_id, session_hash)
+            self._pending(status, plan, digest, now)
+            self._exact_preview(snapshot, plan)
+            try:
+                current = self._reader.capture(plan.target_id, clock=plan.simulation_clock)
+                stale = current.fingerprint() != plan.snapshot_fingerprint
+            except (ValueError, BoardNotFound):
+                stale = True
+            if stale:
+                self._transition(db, run_id, "STALE", now)
+            else:
+                record = ApprovalRecord(
+                    approval_id=token_hex(16),
+                    run_id=run_id,
+                    plan_digest=plan.digest(),
+                    target_id=plan.target_id,
+                    snapshot_revision=plan.board_revision,
+                    policy_version=plan.policy_version,
+                    actor_id=OWNER_ID,
+                    approved_at=now,
+                    expires_at=min(plan.expires_at, session_expiry),
+                )
+                db.execute(
+                    "INSERT INTO approvals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+                    (
+                        record.approval_id,
+                        run_id,
+                        record.plan_digest,
+                        record.target_id,
+                        record.snapshot_revision,
+                        record.policy_version,
+                        plan.mcp_contract_hash,
+                        OWNER_ID,
+                        session_hash,
+                        token_urlsafe(32),
+                        now.isoformat(),
+                        record.expires_at.isoformat(),
+                    ),
+                )
+                self._transition(db, run_id, "APPROVED", now)
+                return record
+        raise ApprovalError("SNAPSHOT_STALE")
+
+    def reject(self, run_id: str, digest: str, token: str, csrf: str) -> Rejection:
+        with self._transaction(write=True) as db:
+            now = as_utc(self._clock())
+            session_hash, _ = self._session(db, token, now, csrf=csrf)
+            status, _, plan = self._load(db, run_id, session_hash)
+            self._pending(status, plan, digest, now)
+            self._transition(db, run_id, "REJECTED", now)
+        return Rejection(run_id=run_id)
+
+    def _exact_preview(self, snapshot: BoardSnapshot, plan: ValidatedPlan) -> PlanPreview:
+        if plan.mcp_contract_hash is not None:
+            raise ApprovalError("TOOL_CONTRACT_CHANGED")
+        try:
+            preview = simulate_plan(snapshot, plan, self._policy)
+        except PlanValidationError as exc:
+            code = "POLICY_CHANGED" if exc.code == PlanErrorCode.POLICY_CHANGED else "PLAN_INVALID"
+            raise ApprovalError(code) from exc
+        if not all(isinstance(outcome, AllowedAction) for outcome in preview.simulation.outcomes):
+            raise ApprovalError("PLAN_INVALID")
+        return preview
+
+    @staticmethod
+    def _load(
+        db: sqlite3.Connection, run_id: str, session_hash: str
+    ) -> tuple[RunStatus, BoardSnapshot, ValidatedPlan]:
+        row = db.execute(
+            """SELECT runs.status, runs.target_id, snapshots.canonical_json AS snapshot,
+                      snapshots.fingerprint, plans.canonical_json AS plan, plans.digest
+               FROM runs JOIN snapshots ON snapshots.run_id = runs.id
+               JOIN plans ON plans.run_id = runs.id
+               WHERE runs.id = ? AND runs.session_hash = ?""",
+            (run_id, session_hash),
+        ).fetchone()
+        if row is None:
+            raise ApprovalError("RUN_NOT_FOUND")
+        try:
+            snapshot = BoardSnapshot.model_validate_json(row["snapshot"])
+            plan = ValidatedPlan.model_validate_json(row["plan"])
+        except ValueError as exc:
+            raise ApprovalError("PLAN_INVALID") from exc
+        if (
+            snapshot.fingerprint() != row["fingerprint"]
+            or plan.digest() != row["digest"]
+            or plan.run_id != run_id
+            or plan.target_id != row["target_id"]
+            or plan.owner_id != OWNER_ID
+        ):
+            raise ApprovalError("PLAN_INVALID")
+        return row["status"], snapshot, plan
+
+    @staticmethod
+    def _pending(status: RunStatus, plan: ValidatedPlan, digest: str, now: datetime) -> None:
+        if status != "AWAITING_APPROVAL":
+            raise ApprovalError("RUN_NOT_PENDING")
+        if now < plan.created_at or now >= plan.expires_at:
+            raise ApprovalError("APPROVAL_EXPIRED")
+        if not compare_digest(digest, plan.digest()):
+            raise ApprovalError("PLAN_DIGEST_MISMATCH")
+
+    @staticmethod
+    def _transition(db: sqlite3.Connection, run_id: str, status: RunStatus, now: datetime) -> None:
+        result = db.execute(
+            """UPDATE runs SET status = ?, updated_at = ?
+               WHERE id = ? AND status = 'AWAITING_APPROVAL'""",
+            (status, now.isoformat(), run_id),
+        )
+        if result.rowcount != 1:
+            raise ApprovalError("RUN_NOT_PENDING")
+
+    @staticmethod
+    def _review(status: RunStatus, preview: PlanPreview) -> RunReview:
+        return RunReview(
+            run_id=preview.plan.run_id,
+            status=status,
+            expires_at=preview.plan.expires_at,
+            review=review_report(preview),
+        )

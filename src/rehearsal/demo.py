@@ -18,8 +18,10 @@ from rehearsal.domain.plans import (
 from rehearsal.domain.policy import BlockReason, Policy
 from rehearsal.domain.simulator import PlanPreview, simulate_plan
 
+DEMO_GOAL = "Rehearse stale-issue maintenance"
 
-def _candidate(snapshot: BoardSnapshot, *, full: bool) -> CandidatePlan:
+
+def demo_candidate(snapshot: BoardSnapshot, *, full: bool) -> CandidatePlan:
     actions: tuple[Action, ...] = (
         CloseIssue(issue_id="ISS-104", reason="completed"),
         AddLabel(issue_id="ISS-108", label="needs-follow-up"),
@@ -67,9 +69,7 @@ def _candidate(snapshot: BoardSnapshot, *, full: bool) -> CandidatePlan:
         proposals.append(
             Proposal(action_id=f"a{index}", action=action, evidence=evidence, rationale=rationale)
         )
-    return CandidatePlan(
-        goal_summary="Rehearse stale-issue maintenance", proposals=tuple(proposals)
-    )
+    return CandidatePlan(goal_summary=DEMO_GOAL, proposals=tuple(proposals))
 
 
 def preview_demo(snapshot: BoardSnapshot, *, full: bool = False) -> PlanPreview:
@@ -77,7 +77,7 @@ def preview_demo(snapshot: BoardSnapshot, *, full: bool = False) -> PlanPreview:
     source_fingerprint = snapshot.fingerprint()
     policy = Policy()
     plan = validate_plan(
-        _candidate(snapshot, full=full),
+        demo_candidate(snapshot, full=full),
         snapshot,
         policy,
         PlanContext(

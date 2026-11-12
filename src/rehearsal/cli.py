@@ -1,6 +1,7 @@
 """Run the Rehearsal demo or browse a local IssueHub board."""
 
 import argparse
+import os
 import sqlite3
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -97,6 +98,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--at", help="explicit UTC or offset timestamp for the review preview")
     serve.add_argument("--web-dist", type=Path, help="path to the built review page")
+    serve.add_argument("--owner-approval", action="store_true", help="enable local owner approval")
     args = parser.parse_args(argv)
 
     try:
@@ -113,7 +115,18 @@ def main(argv: Sequence[str] | None = None) -> None:
             if not 1 <= args.port <= 65535:
                 parser.error("--port must be between 1 and 65535")
             clock = datetime.fromisoformat(args.at) if args.at else None
-            _serve(args.database, args.port, clock=clock, web_dist=args.web_dist)
+            owner_secret = None
+            if args.owner_approval:
+                owner_secret = os.environ.get("REHEARSAL_OWNER_SECRET")
+                if not owner_secret:
+                    parser.error("--owner-approval requires REHEARSAL_OWNER_SECRET")
+            _serve(
+                args.database,
+                args.port,
+                clock=clock,
+                web_dist=args.web_dist,
+                owner_secret=owner_secret,
+            )
             return
         if args.command == "seed":
             snapshot = BoardSnapshot.model_validate_json(args.fixture.read_bytes())
@@ -137,12 +150,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         parser.error(str(exc))
 
 
-def _serve(database: Path, port: int, *, clock: datetime | None, web_dist: Path | None) -> None:
+def _serve(
+    database: Path,
+    port: int,
+    *,
+    clock: datetime | None,
+    web_dist: Path | None,
+    owner_secret: str | None,
+) -> None:
     import uvicorn
 
     from rehearsal.issuehub.api import create_app
 
-    app = create_app(database, clock=clock, web_dist=web_dist)
+    app = create_app(database, clock=clock, web_dist=web_dist, owner_secret=owner_secret)
     uvicorn.run(app, host="127.0.0.1", port=port, proxy_headers=False)
 
 
