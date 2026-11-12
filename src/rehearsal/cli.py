@@ -3,9 +3,10 @@
 import argparse
 import sqlite3
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
+from rehearsal.demo import preview_demo
 from rehearsal.domain.actions import (
     Action,
     AddComment,
@@ -15,19 +16,8 @@ from rehearsal.domain.actions import (
     referenced_issue_id,
 )
 from rehearsal.domain.models import BoardSnapshot
-from rehearsal.domain.plans import (
-    ActivityEvidence,
-    CandidatePlan,
-    Evidence,
-    LabelEvidence,
-    PlanContext,
-    PlanValidationError,
-    Proposal,
-    ResolutionEvidence,
-    validate_plan,
-)
-from rehearsal.domain.policy import BlockReason, Policy
-from rehearsal.domain.simulator import BlockedAction, NoOpAction, simulate_plan
+from rehearsal.domain.policy import Policy
+from rehearsal.domain.simulator import BlockedAction, NoOpAction
 from rehearsal.issuehub.reader import BoardNotFound, IssueHubReader
 from rehearsal.issuehub.schema import upgrade_database
 from rehearsal.issuehub.seed import seed_board
@@ -43,78 +33,10 @@ def _describe(action: Action) -> str:
     return f"create {action.title}"
 
 
-def _candidate(snapshot: BoardSnapshot, *, full: bool) -> CandidatePlan:
-    actions: tuple[Action, ...] = (
-        CloseIssue(issue_id="ISS-104", reason="completed"),
-        AddLabel(issue_id="ISS-108", label="needs-follow-up"),
-        CloseIssue(issue_id="ISS-112", reason="completed"),
-    )
-    if full:
-        actions = (
-            *actions[:2],
-            CreateIssue(
-                title="Investigate import queue stall",
-                body="Follow-up for ISS-108",
-                labels=("follow-up",),
-                source_issue_id="ISS-108",
-            ),
-            actions[2],
-            CloseIssue(issue_id="ISS-117", reason="completed"),
-        )
-    issues = {issue.id: issue for issue in snapshot.issues}
-    proposals: list[Proposal] = []
-    for index, action in enumerate(actions, start=1):
-        issue_id = referenced_issue_id(action)
-        issue = issues.get(issue_id) if issue_id is not None else None
-        if issue is None:
-            raise PlanValidationError(BlockReason.ISSUE_NOT_FOUND, issue_id or "fixture source")
-        labels = LabelEvidence(issue_id=issue.id, field="labels", expected_value=issue.labels)
-        evidence: tuple[Evidence, ...]
-        if isinstance(action, CloseIssue):
-            evidence = (
-                labels,
-                ActivityEvidence(
-                    issue_id=issue.id,
-                    field="last_activity_at",
-                    expected_value=issue.last_activity_at,
-                ),
-                ResolutionEvidence(
-                    issue_id=issue.id,
-                    field="resolved_by_maintainer",
-                    expected_value=issue.resolved_by_maintainer,
-                ),
-            )
-            rationale = "Check closure against captured activity, resolution, and labels."
-        else:
-            evidence = (labels,)
-            rationale = "Show follow-up work on the blocked issue."
-        proposals.append(
-            Proposal(action_id=f"a{index}", action=action, evidence=evidence, rationale=rationale)
-        )
-    return CandidatePlan(
-        goal_summary="Rehearse stale-issue maintenance", proposals=tuple(proposals)
-    )
-
-
 def _demo(snapshot: BoardSnapshot, *, json_output: bool, full: bool) -> None:
-    clock = snapshot.captured_at
-    source_fingerprint = snapshot.fingerprint()
-    policy = Policy()
-    plan = validate_plan(
-        _candidate(snapshot, full=full),
-        snapshot,
-        policy,
-        PlanContext(
-            run_id="fixture-platform-demo",
-            plan_version=1,
-            created_at=clock,
-            expires_at=clock + timedelta(minutes=10),
-            simulation_clock=clock,
-        ),
-    )
-    preview = simulate_plan(snapshot, plan, policy)
-    if source_fingerprint != snapshot.fingerprint():
-        raise RuntimeError("simulation changed the source snapshot")
+    preview = preview_demo(snapshot, full=full)
+    plan = preview.plan
+    clock = plan.simulation_clock
 
     if json_output:
         print(preview.model_dump_json(indent=2))
@@ -173,6 +95,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     serve = commands.add_parser("serve", help="serve the read-only IssueHub API on loopback")
     serve.add_argument("--database", required=True, type=Path)
     serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--at", help="explicit UTC or offset timestamp for the review preview")
+    serve.add_argument("--web-dist", type=Path, help="path to the built review page")
     args = parser.parse_args(argv)
 
     try:
@@ -188,7 +112,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         if args.command == "serve":
             if not 1 <= args.port <= 65535:
                 parser.error("--port must be between 1 and 65535")
-            _serve(args.database, args.port)
+            clock = datetime.fromisoformat(args.at) if args.at else None
+            _serve(args.database, args.port, clock=clock, web_dist=args.web_dist)
             return
         if args.command == "seed":
             snapshot = BoardSnapshot.model_validate_json(args.fixture.read_bytes())
@@ -212,12 +137,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         parser.error(str(exc))
 
 
-def _serve(database: Path, port: int) -> None:
+def _serve(database: Path, port: int, *, clock: datetime | None, web_dist: Path | None) -> None:
     import uvicorn
 
     from rehearsal.issuehub.api import create_app
 
-    uvicorn.run(create_app(database), host="127.0.0.1", port=port, proxy_headers=False)
+    app = create_app(database, clock=clock, web_dist=web_dist)
+    uvicorn.run(app, host="127.0.0.1", port=port, proxy_headers=False)
 
 
 if __name__ == "__main__":

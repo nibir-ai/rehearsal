@@ -76,3 +76,18 @@ with an empty comment history.
 For a database seeded before comment support, run
 `uv run --locked --no-dev python -m rehearsal.cli migrate --database issuehub.sqlite`
 to enable comment reads while preserving the existing board.
+
+## Browser review
+
+After seeding the SQLite demo board, build the review page with Node.js 22.12 or later
+and serve it from the same loopback process as IssueHub.
+
+```sh
+npm --prefix web ci
+npm --prefix web run build
+uv run --locked --no-dev python -m rehearsal.cli serve --database issuehub.sqlite --at 2026-11-12T12:00:00Z --web-dist web/dist
+```
+
+Open [Rehearsal](http://127.0.0.1:8000/) to compare changes, inspect captured evidence,
+filter policy outcomes, and download the report you reviewed. The page previews three
+changes and explains two blocked actions for the seeded board.
