@@ -52,3 +52,21 @@ revision and a page of issue summaries. Pass the returned `next_cursor` as the `
 query parameter to continue. The API also accepts `state=open` or `state=closed` and
 allows up to 50 issues per page. A revision change returns HTTP 409 for an old cursor.
 Restart the listing without a cursor to read the new revision.
+
+## IssueHub MCP server
+
+Configure a local MCP client to launch this command over stdio. Use an absolute database
+path if the client starts the process from a different directory.
+
+```sh
+uv run --locked --no-dev python -m rehearsal.cli mcp --database issuehub.sqlite
+```
+
+The server accepts `board_id: "demo/platform"` and provides five read tools: `list_issues`,
+`get_issue`, `get_issue_comments`, `list_labels`, and `get_board_revision`.
+Comments are paginated and capped at 1,000 characters per body. The demo fixture starts
+with an empty comment history.
+
+For a database seeded before comment support, run
+`uv run --locked --no-dev python -m rehearsal.cli migrate --database issuehub.sqlite`
+to enable comment reads while preserving the existing board.

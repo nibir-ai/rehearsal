@@ -22,6 +22,7 @@
 !/src/rehearsal/domain/simulator.py
 !/src/rehearsal/issuehub/
 !/src/rehearsal/issuehub/api.py
+!/src/rehearsal/issuehub/mcp_server.py
 !/src/rehearsal/issuehub/reader.py
 !/src/rehearsal/issuehub/schema.py
 !/src/rehearsal/issuehub/seed.py

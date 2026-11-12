@@ -22,6 +22,7 @@ from rehearsal.domain.plans import (
 from rehearsal.domain.policy import BlockReason, Policy
 from rehearsal.domain.simulator import BlockedAction, NoOpAction, simulate_plan
 from rehearsal.issuehub.reader import BoardNotFound, IssueHubReader
+from rehearsal.issuehub.schema import upgrade_database
 from rehearsal.issuehub.seed import seed_board
 
 
@@ -133,12 +134,25 @@ def main(argv: Sequence[str] | None = None) -> None:
     seed = commands.add_parser("seed", help="install a fixture into a local IssueHub database")
     seed.add_argument("--fixture", required=True, type=Path)
     seed.add_argument("--database", required=True, type=Path)
+    migrate = commands.add_parser("migrate", help="upgrade an existing IssueHub database")
+    migrate.add_argument("--database", required=True, type=Path)
+    mcp = commands.add_parser("mcp", help="run the read-only IssueHub MCP server over stdio")
+    mcp.add_argument("--database", required=True, type=Path)
     serve = commands.add_parser("serve", help="serve the read-only IssueHub API on loopback")
     serve.add_argument("--database", required=True, type=Path)
     serve.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
 
     try:
+        if args.command == "migrate":
+            upgrade_database(args.database)
+            print("IssueHub schema is up to date.")
+            return
+        if args.command == "mcp":
+            from rehearsal.issuehub.mcp_server import create_server
+
+            create_server(args.database).run(transport="stdio")
+            return
         if args.command == "serve":
             if not 1 <= args.port <= 65535:
                 parser.error("--port must be between 1 and 65535")

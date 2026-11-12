@@ -1,6 +1,8 @@
 """Versioned migrations for the local IssueHub database."""
 
 import sqlite3
+from contextlib import closing
+from pathlib import Path
 
 MIGRATIONS: tuple[tuple[str, ...], ...] = (
     (
@@ -27,6 +29,18 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )""",
         "CREATE INDEX issues_by_state ON issues (board_id, state, id)",
     ),
+    (
+        """CREATE TABLE comments (
+            board_id TEXT NOT NULL,
+            issue_id TEXT NOT NULL,
+            id INTEGER NOT NULL CHECK (id >= 1),
+            author TEXT NOT NULL,
+            body TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (board_id, issue_id, id),
+            FOREIGN KEY (board_id, issue_id) REFERENCES issues(board_id, id)
+        )""",
+    ),
 )
 SCHEMA_VERSION = len(MIGRATIONS)
 
@@ -44,3 +58,14 @@ def migrate(connection: sqlite3.Connection) -> None:
         for statement in migration:
             connection.execute(statement)
         connection.execute(f"PRAGMA user_version = {number}")
+
+
+def upgrade_database(database: Path) -> None:
+    """Upgrade an existing IssueHub database without reseeding it."""
+    uri = f"{database.resolve().as_uri()}?mode=rw"
+    with closing(sqlite3.connect(uri, uri=True)) as connection, connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        if schema_version(connection) == 0:
+            raise sqlite3.DatabaseError("database has not been initialized by IssueHub")
+        migrate(connection)
