@@ -1,0 +1,22 @@
+# Allow only files that ship with the public release.
+*
+!/.gitignore
+!/README.md
+!/pyproject.toml
+!/uv.lock
+
+!/fixtures/
+!/fixtures/boards/
+!/fixtures/boards/platform.json
+
+!/src/
+!/src/rehearsal/
+!/src/rehearsal/__init__.py
+!/src/rehearsal/cli.py
+!/src/rehearsal/domain/
+!/src/rehearsal/domain/actions.py
+!/src/rehearsal/domain/canonical.py
+!/src/rehearsal/domain/models.py
+!/src/rehearsal/domain/plans.py
+!/src/rehearsal/domain/policy.py
+!/src/rehearsal/domain/simulator.py

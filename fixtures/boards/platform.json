@@ -1,0 +1,68 @@
+{
+  "snapshot_id": "board-r17",
+  "board_id": "demo/platform",
+  "board_revision": 17,
+  "captured_at": "2026-11-12T12:00:00Z",
+  "label_registry": [
+    "blocked",
+    "bug",
+    "follow-up",
+    "legal-hold",
+    "needs-follow-up",
+    "needs-human",
+    "resolved",
+    "security"
+  ],
+  "issues": [
+    {
+      "id": "ISS-104",
+      "board_id": "demo/platform",
+      "title": "Retry bug after session renewal",
+      "state": "open",
+      "labels": ["bug", "resolved"],
+      "last_activity_at": "2026-09-20T00:00:00Z",
+      "revision": 7,
+      "resolved_by_maintainer": true
+    },
+    {
+      "id": "ISS-108",
+      "board_id": "demo/platform",
+      "title": "Import queue sometimes stalls",
+      "state": "open",
+      "labels": ["blocked", "bug"],
+      "last_activity_at": "2026-09-25T00:00:00Z",
+      "revision": 1,
+      "resolved_by_maintainer": false
+    },
+    {
+      "id": "ISS-112",
+      "board_id": "demo/platform",
+      "title": "Token scope unexpectedly broad",
+      "state": "open",
+      "labels": ["security"],
+      "last_activity_at": "2026-08-18T00:00:00Z",
+      "revision": 1,
+      "resolved_by_maintainer": false
+    },
+    {
+      "id": "ISS-117",
+      "board_id": "demo/platform",
+      "title": "Export gives empty archive",
+      "state": "open",
+      "labels": ["bug", "resolved"],
+      "last_activity_at": "2026-11-07T00:00:00Z",
+      "revision": 1,
+      "resolved_by_maintainer": true
+    },
+    {
+      "id": "ISS-121",
+      "board_id": "demo/platform",
+      "title": "Crash on non-ASCII path",
+      "state": "open",
+      "labels": ["bug"],
+      "last_activity_at": "2026-08-10T00:00:00Z",
+      "revision": 1,
+      "resolved_by_maintainer": false
+    }
+  ]
+}
