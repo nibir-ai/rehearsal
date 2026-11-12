@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, HTTPException, Path, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 from pydantic import Field
 
 from rehearsal.domain.models import FrozenModel
@@ -18,6 +18,7 @@ from rehearsal.issuehub.approval import (
     Rejection,
     RunReview,
 )
+from rehearsal.issuehub.execution import ExecutionReceipt
 
 _COOKIE = "rehearsal_owner"
 _CSRF_HEADER = "x-rehearsal-csrf"
@@ -49,6 +50,7 @@ _ERROR_STATUS = {
     "TARGET_OUT_OF_SCOPE": 403,
     "BOARD_NOT_FOUND": 404,
     "RUN_NOT_FOUND": 404,
+    "RECEIPT_NOT_FOUND": 404,
     "DEMO_PLAN_UNAVAILABLE": 422,
     "NO_APPROVABLE_ACTIONS": 422,
     "MIGRATION_REQUIRED": 503,
@@ -74,6 +76,12 @@ def _verify_origin(request: Request) -> None:
 def _credentials(request: Request) -> tuple[str, str]:
     _verify_origin(request)
     return request.cookies.get(_COOKIE, ""), request.headers.get(_CSRF_HEADER, "")
+
+
+async def _require_empty_body(request: Request) -> None:
+    async for chunk in request.stream():
+        if chunk:
+            raise HTTPException(422, "BODY_NOT_ALLOWED")
 
 
 def approval_router(service: ApprovalService) -> APIRouter:
@@ -129,5 +137,25 @@ def approval_router(service: ApprovalService) -> APIRouter:
         token, csrf = _credentials(request)
         with _workflow_errors():
             return service.reject(run_id, body.plan_digest, token, csrf)
+
+    @router.post("/runs/{run_id}/execute", dependencies=[Depends(_require_empty_body)])
+    def execute(run_id: RunId, request: Request, response: Response) -> ExecutionReceipt:
+        response.headers["Cache-Control"] = "no-store"
+        token, csrf = _credentials(request)
+        with _workflow_errors():
+            return service.execute(run_id, token, csrf)
+
+    @router.get("/runs/{run_id}/receipt")
+    def get_receipt(run_id: RunId, request: Request, response: Response) -> ExecutionReceipt:
+        response.headers["Cache-Control"] = "no-store"
+        with _workflow_errors():
+            return service.get_receipt(run_id, request.cookies.get(_COOKIE, ""))
+
+    @router.post("/runs/{run_id}/reconcile", dependencies=[Depends(_require_empty_body)])
+    def reconcile(run_id: RunId, request: Request, response: Response) -> ExecutionReceipt:
+        response.headers["Cache-Control"] = "no-store"
+        token, csrf = _credentials(request)
+        with _workflow_errors():
+            return service.reconcile(run_id, token, csrf)
 
     return router

@@ -1,5 +1,6 @@
 """Persist exact owner-reviewed plans and record explicit decisions."""
 
+import re
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
@@ -26,14 +27,16 @@ from rehearsal.domain.plans import (
 )
 from rehearsal.domain.policy import Policy
 from rehearsal.domain.simulator import AllowedAction, PlanPreview, simulate_plan
-from rehearsal.issuehub.reader import BoardNotFound, IssueHubReader
+from rehearsal.issuehub.execution import ExecutionReceipt, ReceiptStatus, apply_plan, verify_receipt
+from rehearsal.issuehub.reader import BoardNotFound, IssueHubReader, capture_board
 from rehearsal.issuehub.review import ReviewReport, review_report
 from rehearsal.issuehub.schema import SCHEMA_VERSION, schema_version
 
 OWNER_ID = "local-owner"
 SESSION_TTL = timedelta(hours=8)
 PLAN_TTL = timedelta(minutes=10)
-RunStatus = Literal["AWAITING_APPROVAL", "APPROVED", "REJECTED", "STALE"]
+RunStatus = Literal["AWAITING_APPROVAL", "APPROVED", "REJECTED", "STALE"] | ReceiptStatus
+_NONCE = re.compile(r"[A-Za-z0-9_-]{43}")
 
 
 class ApprovalError(ValueError):
@@ -220,12 +223,7 @@ class ApprovalService:
             status, snapshot, plan = self._load(db, run_id, session_hash)
             self._pending(status, plan, digest, now)
             self._exact_preview(snapshot, plan)
-            try:
-                current = self._reader.capture(plan.target_id, clock=plan.simulation_clock)
-                stale = current.fingerprint() != plan.snapshot_fingerprint
-            except (ValueError, BoardNotFound):
-                stale = True
-            if stale:
+            if self._fresh_snapshot(db, plan) is None:
                 self._transition(db, run_id, "STALE", now)
             else:
                 record = ApprovalRecord(
@@ -269,6 +267,123 @@ class ApprovalService:
             self._transition(db, run_id, "REJECTED", now)
         return Rejection(run_id=run_id)
 
+    def execute(self, run_id: str, token: str, csrf: str) -> ExecutionReceipt:
+        """Consume approval and apply the exact plan, then verify after commit."""
+        with self._transaction(write=True) as db:
+            now = as_utc(self._clock())
+            session_hash, session_expiry = self._session(db, token, now, csrf=csrf)
+            status, snapshot, plan = self._load(db, run_id, session_hash)
+            existing = self._get_receipt(db, run_id)
+            if existing is not None:
+                return existing
+            if status != "APPROVED":
+                raise ApprovalError("RUN_NOT_APPROVED")
+            approval = db.execute("SELECT * FROM approvals WHERE run_id = ?", (run_id,)).fetchone()
+            if approval is None or (
+                approval["actor_id"] != OWNER_ID
+                or approval["session_hash"] != session_hash
+                or approval["plan_digest"] != plan.digest()
+                or approval["target_id"] != plan.target_id
+                or approval["snapshot_revision"] != plan.board_revision
+                or approval["policy_version"] != plan.policy_version
+                or approval["tool_contract_hash"] != plan.mcp_contract_hash
+                or _NONCE.fullmatch(approval["nonce"]) is None
+            ):
+                raise ApprovalError("APPROVAL_INVALID")
+            if approval["consumed_at"] is not None:
+                raise ApprovalError("APPROVAL_REPLAY")
+            approved_at = datetime.fromisoformat(approval["approved_at"])
+            expires_at = datetime.fromisoformat(approval["expires_at"])
+            if (
+                not plan.created_at
+                <= approved_at
+                <= now
+                < expires_at
+                <= min(plan.expires_at, session_expiry)
+            ):
+                raise ApprovalError("APPROVAL_EXPIRED")
+            self._exact_preview(snapshot, plan)
+            current = self._fresh_snapshot(db, plan)
+            if current is None:
+                self._transition(db, run_id, "STALE", now, expected="APPROVED")
+            else:
+                preview = self._exact_preview(current, plan)
+                receipt = apply_plan(
+                    db, preview, approval_id=approval["id"], actor_id=OWNER_ID, now=now
+                )
+                consumed = db.execute(
+                    """UPDATE approvals SET consumed_at = ?
+                       WHERE id = ? AND nonce = ? AND consumed_at IS NULL""",
+                    (now.isoformat(), approval["id"], approval["nonce"]),
+                )
+                if consumed.rowcount != 1:
+                    raise ApprovalError("APPROVAL_REPLAY")
+                db.execute(
+                    "INSERT INTO receipts VALUES (?, ?, ?)",
+                    (run_id, receipt.status, canonical_json(receipt).decode()),
+                )
+        if current is None:
+            raise ApprovalError("SNAPSHOT_STALE")
+        return self.reconcile(run_id, token, csrf)
+
+    def get_receipt(self, run_id: str, token: str) -> ExecutionReceipt:
+        with self._transaction(write=False) as db:
+            self._session(db, token, as_utc(self._clock()))
+            receipt = self._get_receipt(db, run_id)
+            if receipt is None:
+                raise ApprovalError("RECEIPT_NOT_FOUND")
+            return receipt
+
+    def reconcile(self, run_id: str, token: str, csrf: str) -> ExecutionReceipt:
+        """Verify a committed receipt without applying its actions again."""
+        with self._transaction(write=True) as db:
+            now = as_utc(self._clock())
+            self._session(db, token, now, csrf=csrf)
+            receipt = self._get_receipt(db, run_id)
+            if receipt is None:
+                raise ApprovalError("RECEIPT_NOT_FOUND")
+            if receipt.status in ("VERIFIED", "DIVERGED"):
+                return receipt
+            try:
+                checked = verify_receipt(db, receipt, now=now)
+            except (sqlite3.Error, ValueError, OverflowError):
+                checked = receipt.model_copy(
+                    update={"status": "UNVERIFIED", "uncertainties": ("RESULT_UNVERIFIED",)}
+                )
+            db.execute(
+                "UPDATE receipts SET status = ?, receipt_json = ? WHERE run_id = ?",
+                (checked.status, canonical_json(checked).decode(), run_id),
+            )
+            return checked
+
+    @staticmethod
+    def _get_receipt(db: sqlite3.Connection, run_id: str) -> ExecutionReceipt | None:
+        row = db.execute(
+            "SELECT status, receipt_json FROM receipts WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            receipt = ExecutionReceipt.model_validate_json(row["receipt_json"])
+        except ValueError as exc:
+            raise ApprovalError("RECEIPT_INVALID") from exc
+        if receipt.run_id != run_id or receipt.status != row["status"]:
+            raise ApprovalError("RECEIPT_INVALID")
+        return receipt
+
+    @staticmethod
+    def _fresh_snapshot(db: sqlite3.Connection, plan: ValidatedPlan) -> BoardSnapshot | None:
+        row = db.execute("SELECT revision FROM boards WHERE id = ?", (plan.target_id,)).fetchone()
+        if row is None or row["revision"] != plan.board_revision:
+            return None
+        try:
+            current = capture_board(
+                db, plan.target_id, row["revision"], clock=plan.simulation_clock
+            )
+        except ValueError:
+            return None
+        return current if current.fingerprint() == plan.snapshot_fingerprint else None
+
     def _exact_preview(self, snapshot: BoardSnapshot, plan: ValidatedPlan) -> PlanPreview:
         if plan.mcp_contract_hash is not None:
             raise ApprovalError("TOOL_CONTRACT_CHANGED")
@@ -286,10 +401,12 @@ class ApprovalService:
         db: sqlite3.Connection, run_id: str, session_hash: str
     ) -> tuple[RunStatus, BoardSnapshot, ValidatedPlan]:
         row = db.execute(
-            """SELECT runs.status, runs.target_id, snapshots.canonical_json AS snapshot,
+            """SELECT COALESCE(receipts.status, runs.status) AS status,
+                      runs.target_id, snapshots.canonical_json AS snapshot,
                       snapshots.fingerprint, plans.canonical_json AS plan, plans.digest
                FROM runs JOIN snapshots ON snapshots.run_id = runs.id
                JOIN plans ON plans.run_id = runs.id
+               LEFT JOIN receipts ON receipts.run_id = runs.id
                WHERE runs.id = ? AND runs.session_hash = ?""",
             (run_id, session_hash),
         ).fetchone()
@@ -320,11 +437,18 @@ class ApprovalService:
             raise ApprovalError("PLAN_DIGEST_MISMATCH")
 
     @staticmethod
-    def _transition(db: sqlite3.Connection, run_id: str, status: RunStatus, now: datetime) -> None:
+    def _transition(
+        db: sqlite3.Connection,
+        run_id: str,
+        status: RunStatus,
+        now: datetime,
+        *,
+        expected: RunStatus = "AWAITING_APPROVAL",
+    ) -> None:
         result = db.execute(
             """UPDATE runs SET status = ?, updated_at = ?
-               WHERE id = ? AND status = 'AWAITING_APPROVAL'""",
-            (status, now.isoformat(), run_id),
+               WHERE id = ? AND status = ?""",
+            (status, now.isoformat(), run_id, expected),
         )
         if result.rowcount != 1:
             raise ApprovalError("RUN_NOT_PENDING")

@@ -83,6 +83,26 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
             consumed_at TEXT
         )""",
     ),
+    (
+        "ALTER TABLE boards ADD COLUMN next_issue_number INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE issues ADD COLUMN source_issue_id TEXT",
+        "ALTER TABLE issues ADD COLUMN close_reason TEXT",
+        """CREATE TABLE operation_journal (
+            run_id TEXT NOT NULL REFERENCES runs(id),
+            action_id TEXT NOT NULL,
+            ordinal INTEGER NOT NULL,
+            operation_json TEXT NOT NULL,
+            PRIMARY KEY (run_id, action_id),
+            UNIQUE (run_id, ordinal)
+        )""",
+        """CREATE TABLE receipts (
+            run_id TEXT PRIMARY KEY NOT NULL REFERENCES runs(id),
+            status TEXT NOT NULL CHECK (status IN (
+                'APPLIED_UNVERIFIED', 'VERIFIED', 'DIVERGED', 'UNVERIFIED'
+            )),
+            receipt_json TEXT NOT NULL
+        )""",
+    ),
 )
 SCHEMA_VERSION = len(MIGRATIONS)
 

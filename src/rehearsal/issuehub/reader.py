@@ -175,6 +175,33 @@ def _encode_cursor(cursor: _Cursor | _CommentCursor) -> str:
     return urlsafe_b64encode(cursor.model_dump_json().encode("utf-8")).decode("ascii")
 
 
+def capture_board(
+    connection: sqlite3.Connection, board_id: str, revision: int, *, clock: datetime
+) -> BoardSnapshot:
+    captured_at = as_utc(clock)
+    rows = connection.execute(
+        "SELECT * FROM issues WHERE board_id = ? ORDER BY id LIMIT ?",
+        (board_id, MAX_SNAPSHOT_ISSUES + 1),
+    ).fetchall()
+    if len(rows) > MAX_SNAPSHOT_ISSUES:
+        raise SnapshotTooLarge("board exceeds the supported snapshot size")
+    issues = tuple(_issue(row) for row in rows)
+    if any(issue.last_activity_at > captured_at for issue in issues):
+        raise ValueError("capture clock predates activity in the current board")
+    labels = connection.execute(
+        "SELECT label FROM labels WHERE board_id = ? ORDER BY label", (board_id,)
+    )
+    identity = json.dumps([board_id, revision, captured_at.isoformat()]).encode("utf-8")
+    return BoardSnapshot(
+        snapshot_id=sha256(identity).hexdigest(),
+        board_id=board_id,
+        board_revision=revision,
+        captured_at=captured_at,
+        issues=issues,
+        label_registry=tuple(row["label"] for row in labels),
+    )
+
+
 class IssueHubReader:
     def __init__(self, database: Path, *, allowed_board_id: str) -> None:
         self._database = database.resolve().as_uri()
@@ -202,29 +229,8 @@ class IssueHubReader:
             yield connection, board["revision"]
 
     def capture(self, board_id: str, *, clock: datetime) -> BoardSnapshot:
-        captured_at = as_utc(clock)
         with self._read(board_id) as (connection, revision):
-            rows = connection.execute(
-                "SELECT * FROM issues WHERE board_id = ? ORDER BY id LIMIT ?",
-                (board_id, MAX_SNAPSHOT_ISSUES + 1),
-            ).fetchall()
-            if len(rows) > MAX_SNAPSHOT_ISSUES:
-                raise SnapshotTooLarge("board exceeds the supported snapshot size")
-            issues = tuple(_issue(row) for row in rows)
-            if any(issue.last_activity_at > captured_at for issue in issues):
-                raise ValueError("capture clock predates activity in the current board")
-            labels = connection.execute(
-                "SELECT label FROM labels WHERE board_id = ? ORDER BY label", (board_id,)
-            )
-            identity = json.dumps([board_id, revision, captured_at.isoformat()]).encode("utf-8")
-            return BoardSnapshot(
-                snapshot_id=sha256(identity).hexdigest(),
-                board_id=board_id,
-                board_revision=revision,
-                captured_at=captured_at,
-                issues=issues,
-                label_registry=tuple(row["label"] for row in labels),
-            )
+            return capture_board(connection, board_id, revision, clock=clock)
 
     def list_issues(
         self,

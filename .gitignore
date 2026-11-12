@@ -25,6 +25,7 @@
 !/src/rehearsal/issuehub/api.py
 !/src/rehearsal/issuehub/approval.py
 !/src/rehearsal/issuehub/approval_api.py
+!/src/rehearsal/issuehub/execution.py
 !/src/rehearsal/issuehub/mcp_server.py
 !/src/rehearsal/issuehub/reader.py
 !/src/rehearsal/issuehub/review.py

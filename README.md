@@ -113,3 +113,17 @@ For POST requests, send an `Origin` that matches the server URL, such as
 `http://127.0.0.1:8000`. After sign-in, include the cookie and
 `X-Rehearsal-CSRF: <csrf_token>` on POST requests. The review expires within ten
 minutes. An approval records the decision for that exact plan and leaves the board untouched.
+
+## Execute and verify
+
+Run `migrate` on databases created before execution support. After approving a run, send
+`POST /api/runs/{run_id}/execute` with the same owner cookie, origin, and CSRF header.
+Send an empty body. Execution uses the stored plan and refuses to start if the board
+or approval has changed.
+
+Read `GET /api/runs/{run_id}/receipt` for the predicted and observed effects, including
+any permanent IDs allocated for new records. Issue activity uses the reviewed simulation
+clock, and the receipt records when execution was attempted. It distinguishes `VERIFIED`,
+`DIVERGED`, and `UNVERIFIED`. If execution was interrupted after the commit, send
+`POST /api/runs/{run_id}/reconcile` with the owner credentials and an empty body.
+Reconciliation checks committed state without applying the plan again.
