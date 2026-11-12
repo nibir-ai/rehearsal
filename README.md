@@ -11,8 +11,8 @@ uv sync --locked --no-dev --python 3.12
 uv run --locked --no-dev python -m rehearsal.cli demo --fixture fixtures/boards/platform.json
 ```
 
-The initial dependency setup may need network access. After setup, the demo runs offline and
-requires no account, API key, database, or running service.
+The initial dependency setup may need network access. The fixture demo runs offline after
+installation and requires no account, API key, database, or running service.
 
 The [five-issue fixture](fixtures/boards/platform.json) represents `demo/platform` at revision
 17, captured at `2026-11-12T12:00:00Z`. The demo predicts closing ISS-104 and adding
@@ -30,5 +30,25 @@ state retains the source board revision because no changes were committed.
 
 The fixture proposal is deterministic. Before preview, Rehearsal checks its evidence against
 the captured issues and binds the plan to the snapshot, policy, action schema, and simulation
-clock. The digest identifies those exact inputs and the ordered actions. The demo ends at
-preview and performs zero live writes.
+clock. The digest identifies those exact inputs and the ordered actions. The rehearsal
+performs zero live writes.
+
+## Local IssueHub
+
+Seed a SQLite board and rehearse against a consistent read of its current state.
+
+```sh
+uv run --locked --no-dev python -m rehearsal.cli seed --database issuehub.sqlite --fixture fixtures/boards/platform.json
+uv run --locked --no-dev python -m rehearsal.cli demo --database issuehub.sqlite --at 2026-11-12T12:00:00Z
+```
+
+Seeding refuses to overwrite an existing board. The capture uses the current clock by
+default. An explicit `--at` sets the clock for the current state and supports repeatable
+previews. It does not reconstruct older issue versions.
+
+Start the read-only listing API with `uv run --locked --no-dev python -m rehearsal.cli serve --database issuehub.sqlite`.
+Open [the issue list](http://127.0.0.1:8000/api/issuehub/issues?limit=2) to see the board
+revision and a page of issue summaries. Pass the returned `next_cursor` as the `cursor`
+query parameter to continue. The API also accepts `state=open` or `state=closed` and
+allows up to 50 issues per page. A revision change returns HTTP 409 for an old cursor.
+Restart the listing without a cursor to read the new revision.

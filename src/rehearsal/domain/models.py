@@ -10,6 +10,7 @@ from rehearsal.domain.canonical import fingerprint
 IssueId = Annotated[str, Field(min_length=1, max_length=64)]
 Label = Annotated[str, Field(min_length=1, max_length=64)]
 Revision = Annotated[int, Field(ge=1)]
+MAX_SNAPSHOT_ISSUES = 100
 
 
 class FrozenModel(BaseModel):
@@ -49,7 +50,7 @@ class BoardSnapshot(FrozenModel):
     board_id: str
     board_revision: Revision
     captured_at: AwareDatetime
-    issues: tuple[Issue, ...] = Field(max_length=100)
+    issues: tuple[Issue, ...] = Field(max_length=MAX_SNAPSHOT_ISSUES)
     label_registry: tuple[Label, ...]
 
     _normalize_capture = field_validator("captured_at")(as_utc)

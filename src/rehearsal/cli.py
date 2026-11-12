@@ -1,11 +1,10 @@
-"""Read the local fixture and print its deterministic rehearsal."""
+"""Run the Rehearsal demo or browse a local IssueHub board."""
 
 import argparse
+import sqlite3
 from collections.abc import Sequence
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-
-from pydantic import ValidationError
 
 from rehearsal.domain.actions import Action, AddLabel, CloseIssue
 from rehearsal.domain.models import BoardSnapshot
@@ -22,6 +21,8 @@ from rehearsal.domain.plans import (
 )
 from rehearsal.domain.policy import BlockReason, Policy
 from rehearsal.domain.simulator import BlockedAction, NoOpAction, simulate_plan
+from rehearsal.issuehub.reader import BoardNotFound, IssueHubReader
+from rehearsal.issuehub.seed import seed_board
 
 
 def _describe(action: Action) -> str:
@@ -124,17 +125,53 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     demo = commands.add_parser("demo", help="rehearse the IssueHub fixture actions")
-    demo.add_argument("--fixture", required=True, type=Path, help="path to the board snapshot JSON")
+    source = demo.add_mutually_exclusive_group(required=True)
+    source.add_argument("--fixture", type=Path, help="path to the board snapshot JSON")
+    source.add_argument("--database", type=Path, help="path to a seeded IssueHub database")
+    demo.add_argument("--at", help="explicit UTC or offset timestamp for a database capture")
     demo.add_argument("--json", action="store_true", help="print the exact plan and simulation")
+    seed = commands.add_parser("seed", help="install a fixture into a local IssueHub database")
+    seed.add_argument("--fixture", required=True, type=Path)
+    seed.add_argument("--database", required=True, type=Path)
+    serve = commands.add_parser("serve", help="serve the read-only IssueHub API on loopback")
+    serve.add_argument("--database", required=True, type=Path)
+    serve.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
+
     try:
-        snapshot = BoardSnapshot.model_validate_json(args.fixture.read_bytes())
-    except (OSError, ValidationError) as exc:
-        parser.error(f"could not load fixture: {exc}")
-    try:
+        if args.command == "serve":
+            if not 1 <= args.port <= 65535:
+                parser.error("--port must be between 1 and 65535")
+            _serve(args.database, args.port)
+            return
+        if args.command == "seed":
+            snapshot = BoardSnapshot.model_validate_json(args.fixture.read_bytes())
+            if snapshot.board_id != Policy().allowed_board_id:
+                parser.error("fixture board is outside the configured demo scope")
+            seed_board(args.database, snapshot)
+            print(f"Seeded {snapshot.board_id} at revision {snapshot.board_revision}.")
+            return
+        if args.fixture is not None:
+            if args.at is not None:
+                parser.error("--at requires --database")
+            snapshot = BoardSnapshot.model_validate_json(args.fixture.read_bytes())
+        else:
+            board_id = Policy().allowed_board_id
+            clock = datetime.fromisoformat(args.at) if args.at else datetime.now(UTC)
+            snapshot = IssueHubReader(args.database, allowed_board_id=board_id).capture(
+                board_id, clock=clock
+            )
         _demo(snapshot, json_output=args.json)
-    except (PlanValidationError, ValidationError) as exc:
-        parser.error(f"could not rehearse fixture: {exc}")
+    except (OSError, sqlite3.Error, BoardNotFound, ValueError, OverflowError) as exc:
+        parser.error(str(exc))
+
+
+def _serve(database: Path, port: int) -> None:
+    import uvicorn
+
+    from rehearsal.issuehub.api import create_app
+
+    uvicorn.run(create_app(database), host="127.0.0.1", port=port, proxy_headers=False)
 
 
 if __name__ == "__main__":
