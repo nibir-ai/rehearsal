@@ -132,3 +132,16 @@ clock, and the receipt records when execution was attempted. It distinguishes `V
 `DIVERGED`, and `UNVERIFIED`. If execution was interrupted after the commit, send
 `POST /api/runs/{run_id}/reconcile` with the owner credentials and an empty body.
 Reconciliation checks committed state without applying the plan again.
+
+## Offline benchmark
+
+```sh
+uv run --locked --no-dev python -m rehearsal.cli benchmark --fixture fixtures/boards/platform.json
+```
+
+The benchmark runs each case in a fresh temporary SQLite database at the fixture clock.
+Its JSON reports expected and observed outcomes, board changes during refused requests,
+and how many predicted fields matched committed state. The field count includes only
+cases with a readback result. The runner exits with status 1 if a case fails.
+The timing sample covers direct simulation on the five-issue fixture. Planner accuracy
+is unmeasured because this suite uses fixed proposals.

@@ -86,6 +86,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     demo.add_argument("--at", help="explicit UTC or offset timestamp for a database capture")
     demo.add_argument("--json", action="store_true", help="print the exact plan and simulation")
     demo.add_argument("--full", action="store_true", help="include a follow-up and a recent issue")
+    benchmark = commands.add_parser("benchmark", help="evaluate the local IssueHub workflow")
+    benchmark.add_argument("--fixture", required=True, type=Path)
     seed = commands.add_parser("seed", help="install a fixture into a local IssueHub database")
     seed.add_argument("--fixture", required=True, type=Path)
     seed.add_argument("--database", required=True, type=Path)
@@ -102,6 +104,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     try:
+        if args.command == "benchmark":
+            from rehearsal.benchmark import run_benchmark
+
+            if not run_benchmark(args.fixture):
+                raise SystemExit(1)
+            return
         if args.command == "migrate":
             upgrade_database(args.database)
             print("IssueHub schema is up to date.")

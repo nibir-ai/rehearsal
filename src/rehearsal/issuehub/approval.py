@@ -92,6 +92,7 @@ class ApprovalService:
         owner_secret: str,
         policy: Policy | None = None,
         clock: Callable[[], datetime] = _utc_now,
+        planner: Callable[[BoardSnapshot], CandidatePlan] | None = None,
     ) -> None:
         if len(owner_secret) < 32 or not owner_secret.isascii() or not owner_secret.isprintable():
             raise ValueError("owner secret must be at least 32 printable ASCII characters")
@@ -102,6 +103,7 @@ class ApprovalService:
         self._policy = policy if policy is not None else Policy()
         self._reader = IssueHubReader(database, allowed_board_id=self._policy.allowed_board_id)
         self._clock = clock
+        self._planner = planner
 
     def _session_hash(self, token: str) -> str:
         return hmac_digest(bytes.fromhex(self._secret_hash), token.encode(), "sha256").hex()
@@ -179,7 +181,11 @@ class ApprovalService:
                 owner_id=OWNER_ID,
             )
             try:
-                proposal = demo_candidate(snapshot, full=True)
+                proposal = (
+                    self._planner(snapshot)
+                    if self._planner is not None
+                    else demo_candidate(snapshot, full=True)
+                )
                 candidate_plan = validate_plan(proposal, snapshot, self._policy, context)
                 candidate_preview = simulate_plan(snapshot, candidate_plan, self._policy)
                 allowed = tuple(
