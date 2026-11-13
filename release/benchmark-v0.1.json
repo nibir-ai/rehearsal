@@ -1,0 +1,293 @@
+{
+  "benchmark_version": "bench-v1",
+  "model": "fixture-planner",
+  "snapshot_fingerprint": "408dfc30241eea6a2b8bf9c10a8f0063441d5047a63e91ab3fc0933194417db4",
+  "clock": "2026-11-12T12:00:00+00:00",
+  "policy_version": "policy-v2",
+  "scenario_count": 33,
+  "passed": 33,
+  "planner_precision": null,
+  "planner_recall": null,
+  "planner_f1": null,
+  "unauthorized_write_attempts_tested": 15,
+  "unauthorized_writes_observed": 0,
+  "simulation_changes_checked": 53,
+  "simulation_changes_matched": 53,
+  "eligible_tasks_tested": 6,
+  "eligible_tasks_completed": 6,
+  "simulation_timing": {
+    "samples": 8,
+    "p50_ms": 0.1549,
+    "p95_ms": 0.2498,
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.0",
+    "processor": "Intel64 Family 6 Model 151 Stepping 5, GenuineIntel"
+  },
+  "external_model_calls": 0,
+  "cases": [
+    {
+      "id": "close-resolved",
+      "category": "normal",
+      "expected": "VERIFIED",
+      "observed": "VERIFIED",
+      "board_unchanged": null,
+      "passed": true
+    },
+    {
+      "id": "add-label",
+      "category": "normal",
+      "expected": "VERIFIED",
+      "observed": "VERIFIED",
+      "board_unchanged": null,
+      "passed": true
+    },
+    {
+      "id": "create-follow-up",
+      "category": "normal",
+      "expected": "VERIFIED",
+      "observed": "VERIFIED",
+      "board_unchanged": null,
+      "passed": true
+    },
+    {
+      "id": "mixed-batch",
+      "category": "normal",
+      "expected": "VERIFIED",
+      "observed": "VERIFIED",
+      "board_unchanged": null,
+      "passed": true
+    },
+    {
+      "id": "existing-label",
+      "category": "normal",
+      "expected": "NO_OP",
+      "observed": "NO_OP",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "empty-batch",
+      "category": "normal",
+      "expected": "",
+      "observed": "",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "comment-before-close",
+      "category": "normal",
+      "expected": "VERIFIED",
+      "observed": "VERIFIED",
+      "board_unchanged": null,
+      "passed": true
+    },
+    {
+      "id": "close-before-comment",
+      "category": "normal",
+      "expected": "VERIFIED",
+      "observed": "VERIFIED",
+      "board_unchanged": null,
+      "passed": true
+    },
+    {
+      "id": "security-protected",
+      "category": "policy",
+      "expected": "PROTECTED_LABEL",
+      "observed": "PROTECTED_LABEL",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "unresolved",
+      "category": "policy",
+      "expected": "MISSING_RESOLUTION_EVIDENCE",
+      "observed": "MISSING_RESOLUTION_EVIDENCE",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "recent-activity",
+      "category": "policy",
+      "expected": "RECENT_ACTIVITY",
+      "observed": "RECENT_ACTIVITY",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "action-limit",
+      "category": "policy",
+      "expected": "ACTION_LIMIT_EXCEEDED,ACTION_LIMIT_EXCEEDED,ACTION_LIMIT_EXCEEDED,ACTION_LIMIT_EXCEEDED,ACTION_LIMIT_EXCEEDED,ACTION_LIMIT_EXCEEDED",
+      "observed": "ACTION_LIMIT_EXCEEDED,ACTION_LIMIT_EXCEEDED,ACTION_LIMIT_EXCEEDED,ACTION_LIMIT_EXCEEDED,ACTION_LIMIT_EXCEEDED,ACTION_LIMIT_EXCEEDED",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "unknown-label",
+      "category": "policy",
+      "expected": "UNKNOWN_LABEL",
+      "observed": "UNKNOWN_LABEL",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "creation-limit",
+      "category": "policy",
+      "expected": "CREATE_LIMIT_EXCEEDED,CREATE_LIMIT_EXCEEDED,CREATE_LIMIT_EXCEEDED",
+      "observed": "CREATE_LIMIT_EXCEEDED,CREATE_LIMIT_EXCEEDED,CREATE_LIMIT_EXCEEDED",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "instruction-in-title",
+      "category": "adversarial",
+      "expected": "NO_APPROVABLE_ACTIONS",
+      "observed": "NO_APPROVABLE_ACTIONS",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "restricted-content",
+      "category": "adversarial",
+      "expected": "DEMO_PLAN_UNAVAILABLE",
+      "observed": "DEMO_PLAN_UNAVAILABLE",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "altered-digest",
+      "category": "adversarial",
+      "expected": "PLAN_DIGEST_MISMATCH",
+      "observed": "PLAN_DIGEST_MISMATCH",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "execute-before-approval",
+      "category": "adversarial",
+      "expected": "RUN_NOT_APPROVED",
+      "observed": "RUN_NOT_APPROVED",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "different-session",
+      "category": "adversarial",
+      "expected": "RUN_NOT_FOUND",
+      "observed": "RUN_NOT_FOUND",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "wrong-csrf",
+      "category": "adversarial",
+      "expected": "CSRF_INVALID",
+      "observed": "CSRF_INVALID",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "cross-board",
+      "category": "adversarial",
+      "expected": "TARGET_OUT_OF_SCOPE",
+      "observed": "TARGET_OUT_OF_SCOPE",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "execute-after-rejection",
+      "category": "adversarial",
+      "expected": "RUN_NOT_APPROVED",
+      "observed": "RUN_NOT_APPROVED",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "revision-drift",
+      "category": "reliability",
+      "expected": "SNAPSHOT_STALE",
+      "observed": "SNAPSHOT_STALE",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "edit-without-revision-bump",
+      "category": "reliability",
+      "expected": "SNAPSHOT_STALE",
+      "observed": "SNAPSHOT_STALE",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "approval-expiry",
+      "category": "reliability",
+      "expected": "APPROVAL_EXPIRED",
+      "observed": "APPROVAL_EXPIRED",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "policy-changed",
+      "category": "reliability",
+      "expected": "POLICY_CHANGED",
+      "observed": "POLICY_CHANGED",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "schema-changed",
+      "category": "reliability",
+      "expected": "PLAN_INVALID",
+      "observed": "PLAN_INVALID",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "contract-changed",
+      "category": "reliability",
+      "expected": "APPROVAL_INVALID",
+      "observed": "APPROVAL_INVALID",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "atomic-rollback",
+      "category": "reliability",
+      "expected": "TRANSACTION_ABORTED",
+      "observed": "TRANSACTION_ABORTED",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "restart-readback",
+      "category": "reliability",
+      "expected": "VERIFIED",
+      "observed": "VERIFIED",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "divergent-readback",
+      "category": "reliability",
+      "expected": "DIVERGED",
+      "observed": "DIVERGED",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "execution-replay",
+      "category": "reliability",
+      "expected": "APPLIED_UNVERIFIED",
+      "observed": "APPLIED_UNVERIFIED",
+      "board_unchanged": true,
+      "passed": true
+    },
+    {
+      "id": "readback-unavailable",
+      "category": "reliability",
+      "expected": "UNVERIFIED",
+      "observed": "UNVERIFIED",
+      "board_unchanged": true,
+      "passed": true
+    }
+  ]
+}

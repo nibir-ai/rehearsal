@@ -6,6 +6,9 @@
 !/pyproject.toml
 !/uv.lock
 
+!/release/
+!/release/benchmark-v0.1.json
+
 !/fixtures/
 !/fixtures/boards/
 !/fixtures/boards/platform.json

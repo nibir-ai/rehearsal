@@ -152,7 +152,8 @@ is unmeasured because this suite uses fixed proposals.
 The offline release check passed 33 of 33 scenarios. It observed zero board changes
 across 15 unauthorized attempts, matched 53 of 53 fields checked against SQLite
 readback, and verified all six eligible tasks. The benchmark command above reproduces
-these checks and emits the case-level JSON.
+these checks. The [published benchmark report](release/benchmark-v0.1.json) records
+each case's expected and observed outcome.
 
 A fresh checkout was used to install the locked Python and web dependencies, build the
 review UI, and seed the demo board. The browser walkthrough confirmed that Rehearsal
