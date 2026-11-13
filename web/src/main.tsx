@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { OwnerWorkflow } from "./owner";
 import "./review.css";
 
-type Value = string | number | boolean | string[] | null;
+export type Value = string | number | boolean | string[] | null;
 type Change = { field: string; before: Value; after: Value };
 type Evidence = { issue_id?: string; field: string; expected_value: Value };
 type Status = "ALLOWED" | "BLOCKED" | "NO_OP";
@@ -24,7 +25,7 @@ type ReviewAction = {
   changes: Change[];
   evidence: Evidence[];
 };
-type Report = {
+export type Report = {
   board_id: string;
   board_revision: number;
   simulation_clock: string;
@@ -74,7 +75,7 @@ const filters: { id: Filter; label: string }[] = [
   { id: "blocked", label: "Blocked" },
 ];
 
-function display(value: Value): string {
+export function display(value: Value): string {
   if (value === null || value === "") return "—";
   if (Array.isArray(value)) return value.join(", ") || "None";
   if (typeof value === "boolean") return value ? "Yes" : "No";
@@ -138,6 +139,12 @@ function Inspector({ action }: { action: ReviewAction | undefined }) {
             {action.temporary_id && (
               <p className="temporary">Temporary ID <code>{action.temporary_id}</code></p>
             )}
+            {action.action.kind === "close_issue" && (
+              <p className="temporary">Close reason <code>{action.action.reason}</code></p>
+            )}
+            {action.action.kind === "add_comment" && (
+              <p className="comment-body">{action.action.body}</p>
+            )}
             {action.action.kind === "create_issue" && action.action.source_issue_id && (
               <p className="temporary">Source issue <code>{action.action.source_issue_id}</code></p>
             )}
@@ -173,7 +180,7 @@ function Inspector({ action }: { action: ReviewAction | undefined }) {
   );
 }
 
-function Review({ report }: { report: Report }) {
+function Review({ report, owner = false }: { report: Report; owner?: boolean }) {
   const [query, setQuery] = useState(() => new URLSearchParams(window.location.search));
   useEffect(() => {
     const sync = () => setQuery(new URLSearchParams(window.location.search));
@@ -208,8 +215,9 @@ function Review({ report }: { report: Report }) {
     <>
       <header className="page-heading">
         <div>
-          <h1>Review simulation</h1>
-          <p>Inspect proposed IssueHub changes and their policy decisions.</p>
+          {owner ? <h2>Review exact plan</h2> : <h1>Review simulation</h1>}
+          <p>{owner ? "Only the actions shown here are eligible for approval." :
+            "Inspect proposed IssueHub changes and their policy decisions."}</p>
         </div>
         <button className="export" onClick={() => download(report)}>Download report</button>
       </header>
@@ -269,7 +277,7 @@ function Review({ report }: { report: Report }) {
         <Inspector action={selected} />
       </div>
       <footer className="report-footer">
-        <span>No live writes</span>
+        <span>{owner ? "Simulation preview" : "No live writes"}</span>
         <details><summary>Snapshot details</summary>
           <dl>
             <div><dt>Simulation clock</dt><dd><code>{report.simulation_clock}</code></dd></div>
@@ -284,6 +292,16 @@ function Review({ report }: { report: Report }) {
 function App() {
   const [load, setLoad] = useState<LoadState>({ state: "loading" });
   const [attempt, setAttempt] = useState(0);
+  const [ownerEnabled, setOwnerEnabled] = useState(false);
+  const [ownerView, setOwnerView] = useState(() => sessionStorage.getItem("rehearsal.owner-view") === "1");
+  useEffect(() => {
+    const request = new AbortController();
+    fetch("/api/rehearsal/capabilities", { signal: request.signal })
+      .then((response) => response.ok ? response.json() : null)
+      .then((capabilities) => setOwnerEnabled(capabilities?.owner_approval === true))
+      .catch(() => {});
+    return () => request.abort();
+  }, []);
   useEffect(() => {
     const request = new AbortController();
     fetch("/api/rehearsal/preview", { signal: request.signal })
@@ -308,10 +326,22 @@ function App() {
     <>
       <header className="site-header"><div className="container chrome">
         <div className="brand"><span aria-hidden="true" className="mark">R</span> Rehearsal</div>
-        <span className="local">Local review</span>
+        {ownerEnabled ? (
+          <button aria-pressed={ownerView} onClick={() => {
+            const next = !ownerView;
+            sessionStorage.setItem("rehearsal.owner-view", next ? "1" : "0");
+            setOwnerView(next);
+            if (!next) {
+              setLoad({ state: "loading" });
+              setAttempt((count) => count + 1);
+            }
+          }}>{ownerView ? "Back to demo" : "Owner workflow"}</button>
+        ) : <span className="local">Local review</span>}
       </div></header>
       <main className="container content">
-        {load.state === "ready" ? <Review report={load.report} /> : (
+        {ownerEnabled && ownerView ? (
+          <OwnerWorkflow renderReview={(report) => <Review key={report.plan_digest} report={report} owner />} />
+        ) : load.state === "ready" ? <Review report={load.report} /> : (
           <>
             <h1>Review simulation</h1>
             {load.state === "loading" ? (

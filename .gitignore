@@ -39,4 +39,5 @@
 !/web/tsconfig.json
 !/web/src/
 !/web/src/main.tsx
+!/web/src/owner.tsx
 !/web/src/review.css

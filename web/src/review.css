@@ -139,6 +139,7 @@ dd { overflow-wrap: anywhere; }
 .decision-label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .decision-label code { color: var(--cool); }
 .decision p { color: var(--muted); font-size: 14px; margin-block: 8px; overflow-wrap: anywhere; }
+.decision .comment-body { white-space: pre-wrap; }
 .decision > code, .decision .temporary code { color: var(--accent); }
 .evidence, .changes { border-top: 1px solid var(--rule); }
 .evidence dl, .changes dl { display: grid; gap: 8px; margin-top: 8px; }
@@ -160,6 +161,29 @@ details:not([open]) > :not(summary) { display: none; }
 .skeleton i { height: 50px; border: 1px solid var(--rule); background: var(--panel); border-radius: var(--small-radius); }
 .empty { padding: 16px 16px; }
 noscript p { padding: 20px; }
+
+.owner-workflow { display: grid; gap: 16px; }
+.owner-panel { border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel); padding: 16px; }
+.owner-panel p { margin-top: 8px; color: var(--ink-secondary); }
+.owner-signin { display: grid; gap: 12px; max-width: 420px; }
+.owner-signin label { color: var(--ink-secondary); font-size: 14px; }
+.owner-signin input {
+  min-height: 44px; min-width: 0; padding: 8px 12px; font: inherit;
+  color: var(--ink); background: var(--well);
+  border: 1px solid var(--rule-strong); border-radius: var(--small-radius);
+}
+.owner-signin input:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.owner-signin button { justify-self: start; }
+.owner-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.owner-panel .owner-controls { margin-top: 12px; }
+.receipt-operations { padding-inline-start: 24px; margin-bottom: 0; }
+.receipt-operations li { border-top: 1px solid var(--rule); padding: 8px 0; }
+.receipt-operations summary { min-height: 44px; align-content: center; overflow-wrap: anywhere; }
+.receipt table { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 8px; }
+.receipt th, .receipt td {
+  text-align: left; vertical-align: top; overflow-wrap: anywhere;
+  padding: 8px; border-top: 1px solid var(--rule); font-size: 13px;
+}
 
 @media (max-width: 850px) {
   .container { width: calc(100% - 40px); }

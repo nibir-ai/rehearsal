@@ -99,6 +99,11 @@ Use `migrate` on an existing database to add the approval tables. Set
 `--owner-approval` to the loopback server command. The approval workflow uses
 the current UTC time, including when the browser demo uses a fixed `--at` value.
 
+With the browser review running, select **Owner workflow** and sign in with the
+local secret. Create a review, inspect the exact plan, and approve or reject it.
+Use **Execute approved plan** to apply the reviewed changes and open the receipt.
+**Retry readback** checks a committed run again if verification was interrupted.
+
 1. Send `POST /api/owner/session` with `Authorization: Bearer <owner secret>`.
    Keep the session cookie and the returned `csrf_token`.
 2. Send `POST /api/runs` with

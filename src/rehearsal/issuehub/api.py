@@ -45,6 +45,11 @@ def create_app(
     if owner_secret is not None:
         app.include_router(approval_router(ApprovalService(database, owner_secret=owner_secret)))
 
+    @app.get("/api/rehearsal/capabilities")
+    def capabilities(response: Response) -> dict[str, bool]:
+        response.headers["Cache-Control"] = "no-store"
+        return {"owner_approval": owner_secret is not None}
+
     @app.get("/api/rehearsal/preview")
     def preview(response: Response) -> ReviewReport:
         response.headers["Cache-Control"] = "no-store"
