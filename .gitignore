@@ -1,6 +1,7 @@
 # Allow only files that ship with the public release.
 *
 !/.gitignore
+!/LICENSE
 !/README.md
 !/pyproject.toml
 !/uv.lock

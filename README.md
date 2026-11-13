@@ -234,3 +234,7 @@ if it helps explain the issue. Remove credentials and private issue data before
 sharing. For changes to simulation or execution, include a benchmark case that
 shows the expected policy outcome or readback result.
 [Report an issue](https://github.com/nibir-ai/rehearsal/issues).
+
+## License
+
+Rehearsal is released under the [MIT License](LICENSE).
