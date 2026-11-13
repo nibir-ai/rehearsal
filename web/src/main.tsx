@@ -30,6 +30,7 @@ export type Report = {
   board_revision: number;
   simulation_clock: string;
   plan_digest: string;
+  proposer_type: "fixture" | "model";
   actions: ReviewAction[];
 };
 type LoadState =
@@ -216,7 +217,8 @@ function Review({ report, owner = false }: { report: Report; owner?: boolean }) 
       <header className="page-heading">
         <div>
           {owner ? <h2>Review exact plan</h2> : <h1>Review simulation</h1>}
-          <p>{owner ? "Only the actions shown here are eligible for approval." :
+          <p>{owner ? (report.proposer_type === "model" ? "Proposed by the local model." :
+            "Proposed by the fixture planner.") :
             "Inspect proposed IssueHub changes and their policy decisions."}</p>
         </div>
         <button className="export" onClick={() => download(report)}>Download report</button>
@@ -293,12 +295,16 @@ function App() {
   const [load, setLoad] = useState<LoadState>({ state: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [ownerEnabled, setOwnerEnabled] = useState(false);
+  const [localModel, setLocalModel] = useState<string | null>(null);
   const [ownerView, setOwnerView] = useState(() => sessionStorage.getItem("rehearsal.owner-view") === "1");
   useEffect(() => {
     const request = new AbortController();
     fetch("/api/rehearsal/capabilities", { signal: request.signal })
       .then((response) => response.ok ? response.json() : null)
-      .then((capabilities) => setOwnerEnabled(capabilities?.owner_approval === true))
+      .then((capabilities) => {
+        setOwnerEnabled(capabilities?.owner_approval === true);
+        setLocalModel(typeof capabilities?.local_model === "string" ? capabilities.local_model : null);
+      })
       .catch(() => {});
     return () => request.abort();
   }, []);
@@ -340,7 +346,8 @@ function App() {
       </div></header>
       <main className="container content">
         {ownerEnabled && ownerView ? (
-          <OwnerWorkflow renderReview={(report) => <Review key={report.plan_digest} report={report} owner />} />
+          <OwnerWorkflow localModel={localModel}
+            renderReview={(report) => <Review key={report.plan_digest} report={report} owner />} />
         ) : load.state === "ready" ? <Review report={load.report} /> : (
           <>
             <h1>Review simulation</h1>

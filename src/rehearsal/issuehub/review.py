@@ -29,6 +29,7 @@ class ReviewReport(FrozenModel):
     board_revision: Revision
     simulation_clock: AwareDatetime
     plan_digest: Sha256
+    proposer_type: Literal["fixture", "model"]
     actions: tuple[ReviewAction, ...]
 
 
@@ -65,5 +66,6 @@ def review_report(preview: PlanPreview) -> ReviewReport:
         board_revision=plan.board_revision,
         simulation_clock=plan.simulation_clock,
         plan_digest=preview.plan_digest,
+        proposer_type=plan.proposer_type,
         actions=tuple(actions),
     )

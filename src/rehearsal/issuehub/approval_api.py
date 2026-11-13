@@ -31,7 +31,8 @@ class SessionResponse(FrozenModel):
 
 class RunRequest(FrozenModel):
     target_id: str = Field(min_length=1, max_length=64)
-    goal: Literal["Rehearse stale-issue maintenance"]
+    goal: str = Field(min_length=1, max_length=500, pattern=r"\S")
+    use_model: bool = False
 
 
 class ApproveRequest(FrozenModel):
@@ -53,6 +54,13 @@ _ERROR_STATUS = {
     "RECEIPT_NOT_FOUND": 404,
     "DEMO_PLAN_UNAVAILABLE": 422,
     "NO_APPROVABLE_ACTIONS": 422,
+    "DEMO_GOAL_REQUIRED": 422,
+    "MODEL_DISABLED": 403,
+    "MODEL_CONTEXT_TOO_LARGE": 422,
+    "MODEL_OUTPUT_INVALID": 422,
+    "MODEL_PROPOSAL_REJECTED": 422,
+    "MODEL_CONTEXT_UNAVAILABLE": 503,
+    "MODEL_UNAVAILABLE": 503,
     "MIGRATION_REQUIRED": 503,
 }
 
@@ -112,7 +120,9 @@ def approval_router(service: ApprovalService) -> APIRouter:
         response.headers["Cache-Control"] = "no-store"
         token, csrf = _credentials(request)
         with _workflow_errors():
-            return service.create_run(body.target_id, token, csrf)
+            return service.create_run(
+                body.target_id, token, csrf, goal=body.goal, use_model=body.use_model
+            )
 
     @router.get("/runs/{run_id}/preview")
     def get_review(run_id: RunId, request: Request, response: Response) -> RunReview:

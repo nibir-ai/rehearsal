@@ -15,6 +15,7 @@
 !/src/rehearsal/cli.py
 !/src/rehearsal/benchmark.py
 !/src/rehearsal/demo.py
+!/src/rehearsal/model_planner.py
 !/src/rehearsal/domain/
 !/src/rehearsal/domain/actions.py
 !/src/rehearsal/domain/canonical.py

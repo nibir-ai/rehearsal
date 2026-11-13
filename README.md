@@ -145,3 +145,20 @@ and how many predicted fields matched committed state. The field count includes 
 cases with a readback result. The runner exits with status 1 if a case fails.
 The timing sample covers direct simulation on the five-issue fixture. Planner accuracy
 is unmeasured because this suite uses fixed proposals.
+
+## Optional local model planner
+
+Run Ollama with a downloaded model and cloud features disabled
+(`OLLAMA_NO_CLOUD=1` in the Ollama process). Add `--ollama-model <installed-model>` to
+the Rehearsal server command with `--owner-approval`. Rehearsal connects to Ollama at
+`127.0.0.1:11434` by default. Use `--ollama-port` for a different local port.
+
+In the owner workflow, select **Use local model**, enter a goal, and create a review.
+API clients opt in per request with `"use_model": true` and the desired `"goal"` in
+the `POST /api/runs` body. Rehearsal sends the goal and read-only MCP summaries
+(issue titles, labels, state, timestamps, revisions, and resolution flags) to Ollama.
+Issue bodies, comments, and owner credentials stay out of the model request.
+
+The model proposes actions as JSON. Rehearsal validates the evidence, simulates the
+actions, and presents the resulting plan for explicit owner approval. The fixture planner
+remains available without a model.

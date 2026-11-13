@@ -47,6 +47,13 @@ const errors: Record<string, string> = {
   MIGRATION_REQUIRED: "Run the IssueHub migrate command, then retry.",
   NO_APPROVABLE_ACTIONS: "The board has no actions eligible for approval.",
   BOARD_NOT_FOUND: "Seed the IssueHub demo board, then retry.",
+  MODEL_UNAVAILABLE: "The local model did not respond. Check Ollama or create a fixture review.",
+  MODEL_OUTPUT_INVALID: "The model returned an invalid plan. Try a different goal.",
+  MODEL_PROPOSAL_REJECTED: "The proposal failed validation. Try a different goal.",
+  MODEL_CONTEXT_TOO_LARGE: "The captured board is too large for model planning.",
+  MODEL_CONTEXT_UNAVAILABLE: "The model could not read the captured board. Try again.",
+  TOOL_CONTRACT_CHANGED: "The IssueHub read tools changed. Restart the server and create a fresh review.",
+  MODEL_DISABLED: "Start Rehearsal with a local model to use model planning.",
 };
 
 class RequestError extends Error {
@@ -132,12 +139,17 @@ function ReceiptView({ receipt }: { receipt: Receipt }) {
   );
 }
 
-export function OwnerWorkflow({ renderReview }: { renderReview: (report: Report) => ReactNode }) {
+export function OwnerWorkflow({ renderReview, localModel }: {
+  renderReview: (report: Report) => ReactNode;
+  localModel: string | null;
+}) {
   const [session, setSession] = useState(readSession);
   const [run, setRun] = useState<Run | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [error, setError] = useState<RequestError | null>(null);
   const [busy, setBusy] = useState(false);
+  const [useModel, setUseModel] = useState(false);
+  const [goal, setGoal] = useState("");
   const locked = useRef(false);
   const runPath = (id: string) => "/api/runs/" + encodeURIComponent(id);
 
@@ -204,9 +216,13 @@ export function OwnerWorkflow({ renderReview }: { renderReview: (report: Report)
 
   function create() {
     if (!session) return;
+    const model = Boolean(localModel && useModel);
+    if (model && !goal.trim()) return;
     void perform(async () => {
       const result = await post<Run>("/api/runs", session.csrf, {
-        target_id: "demo/platform", goal: "Rehearse stale-issue maintenance",
+        target_id: "demo/platform",
+        goal: model ? goal.trim() : "Rehearse stale-issue maintenance",
+        use_model: model,
       });
       save({ ...session, runId: result.run_id });
       setRun(result);
@@ -242,6 +258,8 @@ export function OwnerWorkflow({ renderReview }: { renderReview: (report: Report)
     run.status === "AWAITING_APPROVAL" || run.status === "APPROVED" ||
     run.status === "APPLIED_UNVERIFIED" || run.status === "UNVERIFIED"
   );
+  const canCreate = !run || restartNeeded || run.status === "REJECTED" ||
+    run.status === "STALE" || run.status === "VERIFIED" || run.status === "DIVERGED";
 
   return (
     <div className="owner-workflow">
@@ -256,10 +274,25 @@ export function OwnerWorkflow({ renderReview }: { renderReview: (report: Report)
         </form>
       ) : (
         <>
+          {canCreate && localModel && (
+            <section className="owner-panel model-options" aria-label="Planning options">
+              <label>
+                <input type="checkbox" checked={useModel} disabled={busy}
+                  onChange={(event) => setUseModel(event.target.checked)} />
+                Use local model <code>{localModel}</code>
+              </label>
+              {useModel && <>
+                <label htmlFor="model-goal">Planning goal</label>
+                <textarea id="model-goal" maxLength={500} rows={3} value={goal}
+                  onChange={(event) => setGoal(event.target.value)} disabled={busy} />
+                <p>Rehearsal sends your goal, issue titles, labels, and status metadata to Ollama on this machine.</p>
+              </>}
+            </section>
+          )}
           <div className="owner-controls">
-            {(!run || restartNeeded || run.status === "REJECTED" || run.status === "STALE" ||
-              run.status === "VERIFIED" || run.status === "DIVERGED") && (
-              <button disabled={busy} onClick={create}>Create review</button>
+            {canCreate && (
+              <button disabled={busy || Boolean(localModel && useModel && !goal.trim())}
+                onClick={create}>Create review</button>
             )}
             {session.runId && <button disabled={busy} onClick={() => {
               const id = session.runId;

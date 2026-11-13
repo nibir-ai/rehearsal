@@ -101,6 +101,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     serve.add_argument("--at", help="explicit UTC or offset timestamp for the review preview")
     serve.add_argument("--web-dist", type=Path, help="path to the built review page")
     serve.add_argument("--owner-approval", action="store_true", help="enable local owner approval")
+    serve.add_argument("--ollama-model", help="enable opt-in planning with this local Ollama model")
+    serve.add_argument("--ollama-port", type=int, default=11434, help="local Ollama port")
     args = parser.parse_args(argv)
 
     try:
@@ -128,12 +130,16 @@ def main(argv: Sequence[str] | None = None) -> None:
                 owner_secret = os.environ.get("REHEARSAL_OWNER_SECRET")
                 if not owner_secret:
                     parser.error("--owner-approval requires REHEARSAL_OWNER_SECRET")
+            if args.ollama_model and not args.owner_approval:
+                parser.error("--ollama-model requires --owner-approval")
             _serve(
                 args.database,
                 args.port,
                 clock=clock,
                 web_dist=args.web_dist,
                 owner_secret=owner_secret,
+                ollama_model=args.ollama_model,
+                ollama_port=args.ollama_port,
             )
             return
         if args.command == "seed":
@@ -165,12 +171,18 @@ def _serve(
     clock: datetime | None,
     web_dist: Path | None,
     owner_secret: str | None,
+    ollama_model: str | None,
+    ollama_port: int,
 ) -> None:
     import uvicorn
 
     from rehearsal.issuehub.api import create_app
+    from rehearsal.model_planner import OllamaPlanner
 
-    app = create_app(database, clock=clock, web_dist=web_dist, owner_secret=owner_secret)
+    model = OllamaPlanner(database, model=ollama_model, port=ollama_port) if ollama_model else None
+    app = create_app(
+        database, clock=clock, web_dist=web_dist, owner_secret=owner_secret, model_planner=model
+    )
     uvicorn.run(app, host="127.0.0.1", port=port, proxy_headers=False)
 
 

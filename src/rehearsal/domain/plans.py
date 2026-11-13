@@ -81,7 +81,7 @@ class Proposal(FrozenModel):
 
 class CandidatePlan(FrozenModel):
     goal_summary: str = Field(min_length=1, max_length=500)
-    proposals: tuple[Proposal, ...] = Field(min_length=1, max_length=MAX_ACTIONS)
+    proposals: tuple[Proposal, ...] = Field(max_length=MAX_ACTIONS)
 
 
 class PlanContext(FrozenModel):
@@ -92,7 +92,7 @@ class PlanContext(FrozenModel):
     created_at: AwareDatetime
     expires_at: AwareDatetime
     simulation_clock: AwareDatetime
-    proposer_type: Literal["fixture"] = "fixture"
+    proposer_type: Literal["fixture", "model"] = "fixture"
     owner_id: Identifier | None = None
     mcp_contract_hash: Sha256 | None = None
 

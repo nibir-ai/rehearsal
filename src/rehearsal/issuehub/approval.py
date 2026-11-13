@@ -13,7 +13,7 @@ from typing import Literal
 
 from pydantic import AwareDatetime
 
-from rehearsal.demo import demo_candidate
+from rehearsal.demo import DEMO_GOAL, demo_candidate
 from rehearsal.domain.canonical import canonical_json
 from rehearsal.domain.models import BoardSnapshot, FrozenModel, as_utc
 from rehearsal.domain.plans import (
@@ -31,6 +31,7 @@ from rehearsal.issuehub.execution import ExecutionReceipt, ReceiptStatus, apply_
 from rehearsal.issuehub.reader import BoardNotFound, IssueHubReader, capture_board
 from rehearsal.issuehub.review import ReviewReport, review_report
 from rehearsal.issuehub.schema import SCHEMA_VERSION, schema_version
+from rehearsal.model_planner import ModelPlannerError, OllamaPlanner
 
 OWNER_ID = "local-owner"
 SESSION_TTL = timedelta(hours=8)
@@ -93,6 +94,7 @@ class ApprovalService:
         policy: Policy | None = None,
         clock: Callable[[], datetime] = _utc_now,
         planner: Callable[[BoardSnapshot], CandidatePlan] | None = None,
+        model_planner: OllamaPlanner | None = None,
     ) -> None:
         if len(owner_secret) < 32 or not owner_secret.isascii() or not owner_secret.isprintable():
             raise ValueError("owner secret must be at least 32 printable ASCII characters")
@@ -104,6 +106,7 @@ class ApprovalService:
         self._reader = IssueHubReader(database, allowed_board_id=self._policy.allowed_board_id)
         self._clock = clock
         self._planner = planner
+        self._model_planner = model_planner
 
     def _session_hash(self, token: str) -> str:
         return hmac_digest(bytes.fromhex(self._secret_hash), token.encode(), "sha256").hex()
@@ -161,47 +164,83 @@ class ApprovalService:
             raise ApprovalError("CSRF_INVALID")
         return session_hash, expires_at
 
-    def create_run(self, target_id: str, token: str, csrf: str) -> RunReview:
-        with self._transaction(write=True) as db:
+    def create_run(
+        self,
+        target_id: str,
+        token: str,
+        csrf: str,
+        *,
+        goal: str = DEMO_GOAL,
+        use_model: bool = False,
+    ) -> RunReview:
+        with self._transaction(write=False) as db:
             now = as_utc(self._clock())
             session_hash, session_expiry = self._session(db, token, now, csrf=csrf)
             if target_id != self._policy.allowed_board_id:
                 raise ApprovalError("TARGET_OUT_OF_SCOPE")
-            try:
-                snapshot = self._reader.capture(target_id, clock=now)
-            except BoardNotFound as exc:
-                raise ApprovalError("BOARD_NOT_FOUND") from exc
-            run_id = token_hex(16)
-            context = PlanContext(
-                run_id=run_id,
-                plan_version=1,
-                created_at=now,
-                expires_at=min(now + PLAN_TTL, session_expiry),
-                simulation_clock=now,
-                owner_id=OWNER_ID,
+        if not use_model and goal != DEMO_GOAL:
+            raise ApprovalError("DEMO_GOAL_REQUIRED")
+        model = self._model_planner if use_model else None
+        if use_model and model is None:
+            raise ApprovalError("MODEL_DISABLED")
+
+        try:
+            snapshot = self._reader.capture(target_id, clock=now)
+        except BoardNotFound as exc:
+            raise ApprovalError("BOARD_NOT_FOUND") from exc
+        try:
+            if model is not None:
+                proposal = model.propose(goal, snapshot)
+            elif self._planner is not None:
+                proposal = self._planner(snapshot)
+            else:
+                proposal = demo_candidate(snapshot, full=True)
+        except ModelPlannerError as exc:
+            raise ApprovalError(str(exc)) from None
+        except PlanValidationError as exc:
+            raise ApprovalError("DEMO_PLAN_UNAVAILABLE") from exc
+        if not proposal.proposals:
+            raise ApprovalError("NO_APPROVABLE_ACTIONS")
+
+        now = as_utc(self._clock())
+        if now >= session_expiry:
+            raise ApprovalError("OWNER_AUTH_REQUIRED")
+        run_id = token_hex(16)
+        context = PlanContext(
+            run_id=run_id,
+            plan_version=1,
+            created_at=now,
+            expires_at=min(now + PLAN_TTL, session_expiry),
+            simulation_clock=snapshot.captured_at,
+            owner_id=OWNER_ID,
+            proposer_type="model" if model is not None else "fixture",
+            mcp_contract_hash=model.contract_hash if model is not None else None,
+        )
+        try:
+            candidate_plan = validate_plan(proposal, snapshot, self._policy, context)
+            candidate_preview = simulate_plan(snapshot, candidate_plan, self._policy)
+            allowed = tuple(
+                entry
+                for entry, outcome in zip(
+                    proposal.proposals, candidate_preview.simulation.outcomes, strict=True
+                )
+                if isinstance(outcome, AllowedAction)
             )
-            try:
-                proposal = (
-                    self._planner(snapshot)
-                    if self._planner is not None
-                    else demo_candidate(snapshot, full=True)
-                )
-                candidate_plan = validate_plan(proposal, snapshot, self._policy, context)
-                candidate_preview = simulate_plan(snapshot, candidate_plan, self._policy)
-                allowed = tuple(
-                    entry
-                    for entry, outcome in zip(
-                        proposal.proposals, candidate_preview.simulation.outcomes, strict=True
-                    )
-                    if isinstance(outcome, AllowedAction)
-                )
-                if not allowed:
-                    raise ApprovalError("NO_APPROVABLE_ACTIONS")
-                exact = CandidatePlan(goal_summary=proposal.goal_summary, proposals=allowed)
-                plan = validate_plan(exact, snapshot, self._policy, context)
-                preview = self._exact_preview(snapshot, plan)
-            except PlanValidationError as exc:
-                raise ApprovalError("DEMO_PLAN_UNAVAILABLE") from exc
+            if not allowed:
+                raise ApprovalError("NO_APPROVABLE_ACTIONS")
+            exact = CandidatePlan(goal_summary=proposal.goal_summary, proposals=allowed)
+            plan = validate_plan(exact, snapshot, self._policy, context)
+            preview = self._exact_preview(snapshot, plan)
+        except PlanValidationError as exc:
+            code = "MODEL_PROPOSAL_REJECTED" if model is not None else "DEMO_PLAN_UNAVAILABLE"
+            raise ApprovalError(code) from exc
+        with self._transaction(write=True) as db:
+            now = as_utc(self._clock())
+            self._session(db, token, now, csrf=csrf)
+            if self._fresh_snapshot(db, plan) is None:
+                raise ApprovalError("SNAPSHOT_STALE")
+            if now >= plan.expires_at:
+                raise ApprovalError("APPROVAL_EXPIRED")
             db.execute(
                 """INSERT INTO runs VALUES (?, ?, ?, 'AWAITING_APPROVAL', ?, ?)""",
                 (run_id, session_hash, target_id, now.isoformat(), now.isoformat()),
@@ -391,7 +430,12 @@ class ApprovalService:
         return current if current.fingerprint() == plan.snapshot_fingerprint else None
 
     def _exact_preview(self, snapshot: BoardSnapshot, plan: ValidatedPlan) -> PlanPreview:
-        if plan.mcp_contract_hash is not None:
+        expected_contract = None
+        if plan.proposer_type == "model":
+            if self._model_planner is None:
+                raise ApprovalError("MODEL_DISABLED")
+            expected_contract = self._model_planner.contract_hash
+        if plan.mcp_contract_hash != expected_contract:
             raise ApprovalError("TOOL_CONTRACT_CHANGED")
         try:
             preview = simulate_plan(snapshot, plan, self._policy)

@@ -28,6 +28,7 @@ from rehearsal.issuehub.reader import (
     StaleCursor,
 )
 from rehearsal.issuehub.review import ReviewReport, review_report
+from rehearsal.model_planner import OllamaPlanner
 
 
 def create_app(
@@ -36,6 +37,7 @@ def create_app(
     clock: datetime | None = None,
     web_dist: Path | None = None,
     owner_secret: str | None = None,
+    model_planner: OllamaPlanner | None = None,
 ) -> FastAPI:
     allowed_board_id = Policy().allowed_board_id
     reader = IssueHubReader(database, allowed_board_id=allowed_board_id)
@@ -43,12 +45,16 @@ def create_app(
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
     fixed_clock = as_utc(clock) if clock is not None else None
     if owner_secret is not None:
-        app.include_router(approval_router(ApprovalService(database, owner_secret=owner_secret)))
+        service = ApprovalService(database, owner_secret=owner_secret, model_planner=model_planner)
+        app.include_router(approval_router(service))
 
     @app.get("/api/rehearsal/capabilities")
-    def capabilities(response: Response) -> dict[str, bool]:
+    def capabilities(response: Response) -> dict[str, bool | str | None]:
         response.headers["Cache-Control"] = "no-store"
-        return {"owner_approval": owner_secret is not None}
+        return {
+            "owner_approval": owner_secret is not None,
+            "local_model": model_planner.model if owner_secret and model_planner else None,
+        }
 
     @app.get("/api/rehearsal/preview")
     def preview(response: Response) -> ReviewReport:

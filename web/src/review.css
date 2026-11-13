@@ -167,12 +167,17 @@ noscript p { padding: 20px; }
 .owner-panel p { margin-top: 8px; color: var(--ink-secondary); }
 .owner-signin { display: grid; gap: 12px; max-width: 420px; }
 .owner-signin label { color: var(--ink-secondary); font-size: 14px; }
-.owner-signin input {
+.owner-signin input, .model-options textarea {
   min-height: 44px; min-width: 0; padding: 8px 12px; font: inherit;
   color: var(--ink); background: var(--well);
   border: 1px solid var(--rule-strong); border-radius: var(--small-radius);
 }
-.owner-signin input:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.owner-signin input:focus-visible, .model-options :is(input, textarea):focus-visible {
+  outline: 2px solid var(--focus); outline-offset: 3px;
+}
+.model-options { display: grid; gap: 8px; }
+.model-options input { accent-color: var(--accent); margin-inline-end: 8px; }
+.model-options textarea { max-width: 100%; resize: vertical; }
 .owner-signin button { justify-self: start; }
 .owner-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .owner-panel .owner-controls { margin-top: 12px; }
