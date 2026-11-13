@@ -147,9 +147,27 @@ cases with a readback result. The runner exits with status 1 if a case fails.
 The timing sample covers direct simulation on the five-issue fixture. Planner accuracy
 is unmeasured because this suite uses fixed proposals.
 
-The release check passed 33 of 33 scenarios. It observed zero board changes across
-15 unauthorized attempts, matched 53 of 53 fields checked against SQLite readback,
-and verified all six eligible tasks.
+## Release verification
+
+The offline release check passed 33 of 33 scenarios. It observed zero board changes
+across 15 unauthorized attempts, matched 53 of 53 fields checked against SQLite
+readback, and verified all six eligible tasks. The benchmark command above reproduces
+these checks and emits the case-level JSON.
+
+A fresh checkout was used to install the locked Python and web dependencies, build the
+review UI, and seed the demo board. The browser walkthrough confirmed that Rehearsal
+blocked a protected closure even with instructions in the issue title, refused execution
+after the reviewed board changed, and downloaded a receipt for a separately approved
+and verified run.
+
+A live smoke test used Ollama 0.40.16 with `qwen2.5:1.5b` (manifest `65ec06548149`),
+prompt `issuehub-proposals-v2`, temperature 0, and the five-issue fixture at its
+documented clock. Planning ran on an Intel Core i5-12400 CPU with cloud features
+disabled and no paid API calls. The model proposed adding `needs-follow-up` to
+ISS-108 in 9.82 seconds. Execution before approval was refused. The approved run
+returned a `VERIFIED` receipt. In a second request, the model supplied incorrect
+evidence for closing ISS-112. Rehearsal rejected the proposal in 9.03 seconds and
+the board stayed unchanged. These two requests measure a single local workflow.
 
 ## Optional local model planner
 
@@ -207,3 +225,12 @@ The action contract accepts `close_issue` with an issue ID and reason,
 ID and body, and `create_issue` with a title, body, labels, and optional source
 issue ID. The [action schema](src/rehearsal/domain/actions.py) defines the fields
 and limits.
+
+## Contributing
+
+Open a GitHub issue with the behavior you expected, what you observed, and the
+steps to reproduce it on a fresh fixture. Include the report or receipt JSON
+if it helps explain the issue. Remove credentials and private issue data before
+sharing. For changes to simulation or execution, include a benchmark case that
+shows the expected policy outcome or readback result.
+[Report an issue](https://github.com/nibir-ai/rehearsal/issues).
