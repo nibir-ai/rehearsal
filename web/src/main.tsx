@@ -109,12 +109,12 @@ function compare(row: ReviewAction): [Value, Value] {
   return change ? [change.before, change.after] : [null, null];
 }
 
-function download(report: Report) {
-  const file = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+function downloadJson(value: object, filename: string) {
+  const file = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(file);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `rehearsal-r${report.board_revision}-${report.plan_digest.slice(0, 8)}.json`;
+  link.download = filename;
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
@@ -221,7 +221,9 @@ function Review({ report, owner = false }: { report: Report; owner?: boolean }) 
             "Proposed by the fixture planner.") :
             "Inspect proposed IssueHub changes and their policy decisions."}</p>
         </div>
-        <button className="export" onClick={() => download(report)}>Download report</button>
+        <button className="export" onClick={() => downloadJson(
+          report, `rehearsal-r${report.board_revision}-${report.plan_digest.slice(0, 8)}.json`,
+        )}>Download report</button>
       </header>
       <dl className="summary">
         <div><dt>Board</dt><dd><code>{report.board_id}</code></dd></div>
@@ -346,7 +348,7 @@ function App() {
       </div></header>
       <main className="container content">
         {ownerEnabled && ownerView ? (
-          <OwnerWorkflow localModel={localModel}
+          <OwnerWorkflow localModel={localModel} downloadJson={downloadJson}
             renderReview={(report) => <Review key={report.plan_digest} report={report} owner />} />
         ) : load.state === "ready" ? <Review report={load.report} /> : (
           <>

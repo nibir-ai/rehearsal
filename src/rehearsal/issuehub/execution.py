@@ -108,7 +108,10 @@ def apply_plan(
             next_number += 1
             temporary_id = outcome.after.id
             expected.update(
-                title=action.title, body=action.body, source_issue_id=action.source_issue_id
+                title=action.title,
+                body=action.body,
+                source_issue_id=action.source_issue_id,
+                resolved_by_maintainer=outcome.after.resolved_by_maintainer,
             )
         else:
             target = action.issue_id
@@ -260,6 +263,9 @@ def _verify_operation(
             observed.update(
                 title=row["title"], body=row["body"], source_issue_id=row["source_issue_id"]
             )
+            # Receipts created before this field was included still have a valid rubric.
+            if "resolved_by_maintainer" in operation.predicted:
+                observed["resolved_by_maintainer"] = bool(row["resolved_by_maintainer"])
         elif operation.kind == "close_issue":
             observed["close_reason"] = row["close_reason"]
         elif operation.kind == "add_comment":

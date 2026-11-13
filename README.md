@@ -102,6 +102,7 @@ the current UTC time, including when the browser demo uses a fixed `--at` value.
 With the browser review running, select **Owner workflow** and sign in with the
 local secret. Create a review, inspect the exact plan, and approve or reject it.
 Use **Execute approved plan** to apply the reviewed changes and open the receipt.
+Use **Download receipt** to save the verification results as JSON.
 **Retry readback** checks a committed run again if verification was interrupted.
 
 1. Send `POST /api/owner/session` with `Authorization: Bearer <owner secret>`.
@@ -146,6 +147,10 @@ cases with a readback result. The runner exits with status 1 if a case fails.
 The timing sample covers direct simulation on the five-issue fixture. Planner accuracy
 is unmeasured because this suite uses fixed proposals.
 
+The release check passed 33 of 33 scenarios. It observed zero board changes across
+15 unauthorized attempts, matched 53 of 53 fields checked against SQLite readback,
+and verified all six eligible tasks.
+
 ## Optional local model planner
 
 Run Ollama with a downloaded model and cloud features disabled
@@ -162,3 +167,43 @@ Issue bodies, comments, and owner credentials stay out of the model request.
 The model proposes actions as JSON. Rehearsal validates the evidence, simulates the
 actions, and presents the resulting plan for explicit owner approval. The fixture planner
 remains available without a model.
+
+## Security and limitations
+
+- Run IssueHub on loopback with a disposable demo database. Anyone who can read or
+  modify the SQLite file directly has access outside Rehearsal's approval boundary.
+- MCP tools read the configured board. Model output is a proposal. Only the
+  authenticated owner workflow can approve and execute a plan, and the executor
+  rechecks its digest, policy, and snapshot under a SQLite write lock.
+- Approval and receipts belong to the owner session that created the run.
+  Keep that session available while a run is pending verification.
+- Simulation and verification cover the modeled IssueHub fields. Credentials in
+  proposed text are checked against a limited set of patterns. Use fixture data
+  for demos and keep credentials out of issues and planning goals.
+- Optional model planning sends the listed issue metadata and goal to the
+  configured local Ollama process. The operator controls that process and its
+  network settings.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    I[IssueHub SQLite] --> S[Board snapshot]
+    I --> M[Read-only MCP]
+    M --> P[Optional local planner]
+    S --> F[Fixture planner]
+    P --> V[Validate and simulate]
+    F --> V
+    S --> V
+    V --> R[Exact plan review]
+    R --> A[Owner approval]
+    A --> E[Transactional executor]
+    E --> I
+    I --> C[Readback and receipt]
+```
+
+The action contract accepts `close_issue` with an issue ID and reason,
+`add_label` with an issue ID and registered label, `add_comment` with an issue
+ID and body, and `create_issue` with a title, body, labels, and optional source
+issue ID. The [action schema](src/rehearsal/domain/actions.py) defines the fields
+and limits.

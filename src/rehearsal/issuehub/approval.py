@@ -318,7 +318,7 @@ class ApprovalService:
             now = as_utc(self._clock())
             session_hash, session_expiry = self._session(db, token, now, csrf=csrf)
             status, snapshot, plan = self._load(db, run_id, session_hash)
-            existing = self._get_receipt(db, run_id)
+            existing = self._get_receipt(db, run_id, session_hash)
             if existing is not None:
                 return existing
             if status != "APPROVED":
@@ -373,8 +373,8 @@ class ApprovalService:
 
     def get_receipt(self, run_id: str, token: str) -> ExecutionReceipt:
         with self._transaction(write=False) as db:
-            self._session(db, token, as_utc(self._clock()))
-            receipt = self._get_receipt(db, run_id)
+            session_hash, _ = self._session(db, token, as_utc(self._clock()))
+            receipt = self._get_receipt(db, run_id, session_hash)
             if receipt is None:
                 raise ApprovalError("RECEIPT_NOT_FOUND")
             return receipt
@@ -383,8 +383,8 @@ class ApprovalService:
         """Verify a committed receipt without applying its actions again."""
         with self._transaction(write=True) as db:
             now = as_utc(self._clock())
-            self._session(db, token, now, csrf=csrf)
-            receipt = self._get_receipt(db, run_id)
+            session_hash, _ = self._session(db, token, now, csrf=csrf)
+            receipt = self._get_receipt(db, run_id, session_hash)
             if receipt is None:
                 raise ApprovalError("RECEIPT_NOT_FOUND")
             if receipt.status in ("VERIFIED", "DIVERGED"):
@@ -402,9 +402,14 @@ class ApprovalService:
             return checked
 
     @staticmethod
-    def _get_receipt(db: sqlite3.Connection, run_id: str) -> ExecutionReceipt | None:
+    def _get_receipt(
+        db: sqlite3.Connection, run_id: str, session_hash: str
+    ) -> ExecutionReceipt | None:
         row = db.execute(
-            "SELECT status, receipt_json FROM receipts WHERE run_id = ?", (run_id,)
+            """SELECT receipts.status, receipts.receipt_json
+               FROM receipts JOIN runs ON runs.id = receipts.run_id
+               WHERE receipts.run_id = ? AND runs.session_hash = ?""",
+            (run_id, session_hash),
         ).fetchone()
         if row is None:
             return None

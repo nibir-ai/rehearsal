@@ -139,9 +139,10 @@ function ReceiptView({ receipt }: { receipt: Receipt }) {
   );
 }
 
-export function OwnerWorkflow({ renderReview, localModel }: {
+export function OwnerWorkflow({ renderReview, localModel, downloadJson }: {
   renderReview: (report: Report) => ReactNode;
   localModel: string | null;
+  downloadJson: (value: object, filename: string) => void;
 }) {
   const [session, setSession] = useState(readSession);
   const [run, setRun] = useState<Run | null>(null);
@@ -327,7 +328,16 @@ export function OwnerWorkflow({ renderReview, localModel }: {
               )}
             </section>
           )}
-          {receipt && <ReceiptView receipt={receipt} />}
+          {receipt && run && (
+            <>
+              <ReceiptView receipt={receipt} />
+              <div className="owner-controls">
+                <button onClick={() => downloadJson(receipt, `rehearsal-receipt-${run.run_id}.json`)}>
+                  Download receipt
+                </button>
+              </div>
+            </>
+          )}
         </>
       )}
     </div>
